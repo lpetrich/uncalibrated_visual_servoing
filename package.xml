@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>uncalibrated_visual_servoing</name>
+  <version>0.1.0</version>
+  <description>The uncalibrated_visual_servoing package</description>
+  <maintainer email="laurapetrich@ualberta.ca">lpetrich</maintainer>
+  <license>BSD</license>
+  <author>lpetrich</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>wam_control</depend>
+  <depend>message_generation</depend>
+  <depend>message_runtime</depend>
+  <depend>catkin_modules</depend>
+  <export>
+  </export>
+
+</package>
