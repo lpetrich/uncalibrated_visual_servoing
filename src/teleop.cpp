@@ -1,10 +1,10 @@
 /* 
- * lpetrich 27/06/18
+ * cstephens & lpetrich 01/07/2018
  */
 
-#include "uncalibrated_visual_servoing/uvs_control.h"
+#include "uncalibrated_visual_servoing/teleop.h"
 
-UVSControl::UVSControl(ros::NodeHandle nh_) 
+Teleop::Teleop(ros::NodeHandle nh_) 
 {
 	dof = 0;
 	total_joints = 0;
@@ -13,7 +13,8 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 	reset = false;
 	move_now = false;
 	ready_to_grasp = false;
-	// prefix = "/home/laura/ComputerVision/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
+	quit_program = false;
+	// prefix = "/home/laura/ComputerVision/vs_workspace/src/visual_servoing/log_data/";
 	prefix = "/home/froglake/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
 	filename = prefix + current_time() + ".txt";
 	arm = new ArmControl(nh_);
@@ -35,19 +36,21 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 		exit(EXIT_FAILURE);
 	}
 	ROS_INFO_STREAM("Robot has " << dof << " DOF");
-	error_sub = nh_.subscribe("/image_error", 1, &UVSControl::error_cb, this);
-	eef_sub = nh_.subscribe("/eef_pos", 1, &UVSControl::eef_cb, this);
-	reset_sub = nh_.subscribe("/reset", 1, &UVSControl::reset_cb, this);
-	move_sub = nh_.subscribe("/move", 1, &UVSControl::move_cb, this);
+	error_sub = nh_.subscribe("/image_error", 1, &Teleop::error_cb, this);
+	eef_sub = nh_.subscribe("/eef_pos", 1, &Teleop::eef_cb, this);
+	reset_sub = nh_.subscribe("/reset", 1, &Teleop::reset_cb, this);
+	move_sub = nh_.subscribe("/move", 1, &Teleop::move_cb, this);
 }
 
-UVSControl::~UVSControl() 
+Teleop::~Teleop() 
 { // shutdown ROS subscribers properly
 	error_sub.shutdown();
 	eef_sub.shutdown();
+	reset_sub.shutdown();
+	move_sub.shutdown();
 }
 
-Eigen::VectorXd UVSControl::calculate_delta_q()
+Eigen::VectorXd Teleop::calculate_delta_q()
 { // calculates the actual motion change in joint space to use in Broyden's update
 	Eigen::VectorXd total_dq;
 	Eigen::VectorXd dq(dof);
@@ -63,7 +66,7 @@ Eigen::VectorXd UVSControl::calculate_delta_q()
 	return dq;
 }
 
-Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_state, const Eigen::VectorXd& delta)
+Eigen::VectorXd Teleop::calculate_target(const Eigen::VectorXd& current_state, const Eigen::VectorXd& delta)
 { // calculates target vector in joint space to move to with given delta added to active joints
 	Eigen::VectorXd target_state(total_joints);
 	int j = 0;
@@ -78,14 +81,14 @@ Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_stat
 	return target_state;
 }
 
-Eigen::VectorXd UVSControl::calculate_step(const Eigen::VectorXd& current_error_value) 
+Eigen::VectorXd Teleop::calculate_step(const Eigen::VectorXd& current_error_value) 
 { // calculates new motion step to take with the control law: step = −λJ+e 
 	Eigen::VectorXd step;
 	step = -lambda * (jacobian_inverse * current_error_value).transpose();
 	return step;
 }
 
-bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
+bool Teleop::convergence_check(const Eigen::VectorXd& current_error)
 { // should we make lambda larger as we get closer to the target? Test
 	double pixel_step_size = 30.0;
 	double n = current_error.norm();
@@ -110,7 +113,7 @@ bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
 	return false;
 }
 
-bool UVSControl::broyden_update(double alpha)
+bool Teleop::broyden_update(double alpha)
 { // update jacobian 
 	Eigen::MatrixXd update(jacobian.rows(), jacobian.cols());
 	Eigen::VectorXd current_eef_position;
@@ -140,7 +143,7 @@ bool UVSControl::broyden_update(double alpha)
 	return true;
 }
 
-int UVSControl::move_step(bool continous_motion)
+int Teleop::move_step(bool continous_motion)
 { // step through one loop of VS
 	Eigen::VectorXd current_error;
 	Eigen::VectorXd current_joint_positions;
@@ -186,7 +189,7 @@ int UVSControl::move_step(bool continous_motion)
 	return 2;
 }
 
-void UVSControl::converge(double alpha, int max_iterations, bool continous_motion)
+void Teleop::converge(double alpha, int max_iterations, bool continous_motion)
 {
 	int c;
 	std::cout << "\n**************************************" << std::endl;
@@ -213,7 +216,7 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 	}
 }
 
-void UVSControl::set_active_joints()
+void Teleop::set_active_joints()
 { // set which joints to use according to users input
 	for (int i = 0; i < dof; ++i) { 
 		active_joints[i] = 0; 
@@ -230,7 +233,7 @@ void UVSControl::set_active_joints()
 	}
 }
 
-bool UVSControl::jacobian_estimate(double perturbation_delta) 
+bool Teleop::jacobian_estimate(double perturbation_delta) 
 { // perturb each active joint for the initial jacobian estimation
 	Eigen::VectorXd e1;
 	Eigen::VectorXd e2;
@@ -267,7 +270,7 @@ bool UVSControl::jacobian_estimate(double perturbation_delta)
 	return true;
 }
 
-Eigen::MatrixXd UVSControl::control_plane_vectors(Eigen::VectorXd & delta_q)
+Eigen::MatrixXd Teleop::control_plane_vectors(Eigen::VectorXd & delta_q)
 {
 	/*
 		Returns a dof x 2 matrix, with columns that define the VS control plane.
@@ -309,7 +312,7 @@ Eigen::MatrixXd UVSControl::control_plane_vectors(Eigen::VectorXd & delta_q)
 	return control_vectors;
 }
 
-Eigen::VectorXd UVSControl::calculate_rampdown_and_endtime(const Eigen::VectorXd& delta, const Eigen::VectorXd& current_velocities)
+Eigen::VectorXd Teleop::calculate_rampdown_and_endtime(const Eigen::VectorXd& delta, const Eigen::VectorXd& current_velocities)
 { // Code from libbarrett copied here and refactored to determine rampDown time and end time
 	// First element of vector is start of plateau (negative is no plateau), second element is ramp down time, last element is predicted end time.
 	// cstephens ??/07/2018
@@ -388,10 +391,9 @@ Eigen::VectorXd UVSControl::calculate_rampdown_and_endtime(const Eigen::VectorXd
 }
 
 
-void UVSControl::loop()
+void Teleop::menu()
 { // main loop for user interaction
 	bool jacobian_initialized = false;
-	bool exit_loop = false;
 	bool continous_motion = true;
 	double perturbation_delta = 0.0875;
 	double alpha = 1.0; // update rate
@@ -401,120 +403,102 @@ void UVSControl::loop()
 	std::string line;
 	std::string s;
 	lambda = default_lambda; // convergence rate
-	while (ros::ok() && !exit_loop) {
-		if (move_now && ready() && jacobian_initialized) {
-			converge(alpha, 100, continous_motion);
-			lambda = default_lambda;
-			move_now = false;
+	std::cout << "************************************************************************************************" <<
+		"\nSelect option:" <<
+		"\n\tp: Lock joint position" <<
+		"\n\tu: Unlock joint position" <<
+		"\n\td: Set Jacobian delta movement (current = " << perturbation_delta << ")" <<
+		"\n\tl: Set step convergence lambda value (current = " << lambda << ")" <<
+		"\n\ta: Set alpha value for broyden update (current = " << alpha << ")" <<
+		"\n\tt: Set image_tol - prevents collision in image space (current = " << image_tol << ")" <<
+		"\n\tc: Set max iteration for convergence (current = " << max_iterations << ")" <<
+		"\n\tj: Compute Jacobian" <<
+		"\n\tx: Compute Jacobian with chosen joints" <<
+		"\n\tv: Complete VS convergence with set max iterations " << 
+		"\n\ts: Compute and move one step" <<
+		"\n\ti: Move to initial position" <<
+		"\n\th: Move to home position" <<
+		"\n\to: Open grasp" <<
+		"\n\tg: Close grasp" <<
+		"\n\tz: Close spread" <<
+		"\n\tq: quit" <<
+		"\n\t>> " << std::endl;
+	std::getline(std::cin, line);
+	switch (line[0]) {
+	case 'p':
+		arm->lock_joint_position(true);
+		break;
+	case 'u':
+		arm->lock_joint_position(false);
+		break;
+	case 'j':
+		if (ready()) {
+			for (int i = 0; i < dof; ++i) { active_joints[i] = 1; }
+			jacobian_initialized = jacobian_estimate(perturbation_delta);
 		}
-		std::cout << "************************************************************************************************" <<
-			"\nSelect option:" <<
-			"\n\tp: Lock joint position" <<
-			"\n\tu: Unlock joint position" <<
-			"\n\td: Set Jacobian delta movement (current = " << perturbation_delta << ")" <<
-			"\n\tl: Set step convergence lambda value (current = " << lambda << ")" <<
-			"\n\ta: Set alpha value for broyden update (current = " << alpha << ")" <<
-			"\n\tt: Set image_tol - prevents collision in image space (current = " << image_tol << ")" <<
-			"\n\tc: Set max iteration for convergence (current = " << max_iterations << ")" <<
-			"\n\tm: Set continuous motion (current = " << continous_motion << ")" <<
-			"\n\tj: Compute Jacobian" <<
-			"\n\tx: Compute Jacobian with chosen joints" <<
-			"\n\tv: Complete VS convergence with set max iterations " << 
-			"\n\ts: Compute and move one step" <<
-			"\n\ti: Move to initial position" <<
-			"\n\th: Move to home position" <<
-			"\n\to: Open grasp" <<
-			"\n\tg: Close grasp" <<
-			"\n\tz: Close spread" <<
-			"\n\tn: Start new logging file" <<
-			"\n\tq: quit" <<
-			"\n\t>> " << std::endl;
-		std::getline(std::cin, line);
-		switch (line[0]) {
-		case 'm':
-			s = string_input("Would you like to set motion to continuous or non-continuous?"); // wam_control --> misc_utilities.h
-			if (s[0] == 'c' || s[0] == 'C') { continous_motion = true; } 
-			else { continous_motion = false; }
-			std::cout << "continuous motion set to " << BoolToString(continous_motion) << std::endl; // wam_control --> misc_utilities.h
-			break;
-		case 'p':
-			arm->lock_joint_position(true);
-			break;
-		case 'u':
-			arm->lock_joint_position(false);
-			break;
-		case 'j':
-			if (ready()) {
-				for (int i = 0; i < dof; ++i) { active_joints[i] = 1; }
-				jacobian_initialized = jacobian_estimate(perturbation_delta);
-			}
-			break;
-		case 'x':
-			if (ready()) { 
-				set_active_joints();
-				jacobian_initialized = jacobian_estimate(perturbation_delta);
-			}
-			break;
-		case 'i':
-			arm->move_to_initial_position();
-			bhand->open_grasp();
-			bhand->close_spread();
-			ready_to_grasp = false;
-			break;
-		case 'd':
-			perturbation_delta = degreesToRadians(double_input(1, 20));
-			break;
-		case 'l':
-			lambda = double_input(0, 1);
-			break;
-		case 'a':
-			alpha = double_input(0, 1);
-			break;
-		case 'c':
-			max_iterations = double_input(0, 500);
-			break;
-		case 't':
-			image_tol = double_input(0, 500);
-			lambda = default_lambda;
-			break;
-		case 'v':
-			if (ready() && jacobian_initialized) {
-				converge(alpha, max_iterations - 1, continous_motion);
-				lambda = default_lambda;
-			} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
-			break;
-		case 's':
-			if (ready() && jacobian_initialized) { 
-				converge(alpha, 1, false);
-				lambda = default_lambda;
-			} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
-			break;
-		case 'h':
-			arm->move_to_home_position();
-			break;
-		case 'o':
-			bhand->open_grasp();
-			bhand->open_spread();
-			break;
-		case 'g':
-			bhand->close_grasp();
-			break;
-		case 'z':
-			bhand->close_spread();
-			break;
-		case 'n':
-			filename = prefix + current_time() + ".txt";
-			break;
-		case 'q':
-			exit_loop = true;
-			break;
-		default:
-			ROS_WARN_STREAM("Unknown option");
+		break;
+	case 'x':
+		if (ready()) { 
+			set_active_joints();
+			jacobian_initialized = jacobian_estimate(perturbation_delta);
 		}
+		break;
+	case 'i':
+		arm->move_to_initial_position();
+		bhand->open_grasp();
+		bhand->close_spread();
+		ready_to_grasp = false;
+		break;
+	case 'd':
+		perturbation_delta = degreesToRadians(double_input(1, 20));
+		break;
+	case 'l':
+		lambda = double_input(0, 1);
+		break;
+	case 'a':
+		alpha = double_input(0, 1);
+		break;
+	case 'c':
+		max_iterations = double_input(0, 500);
+		break;
+	case 't':
+		image_tol = double_input(0, 500);
+		lambda = default_lambda;
+		break;
+	case 'v':
+		if (ready() && jacobian_initialized) {
+			converge(alpha, max_iterations - 1, continous_motion);
+			lambda = default_lambda;
+		} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
+		break;
+	case 's':
+		if (ready() && jacobian_initialized) { 
+			converge(alpha, 1, false);
+			lambda = default_lambda;
+		} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
+		break;
+	case 'h':
+		arm->move_to_home_position();
+		break;
+	case 'o':
+		bhand->open_grasp();
+		bhand->open_spread();
+		break;
+	case 'g':
+		bhand->close_grasp();
+		break;
+	case 'z':
+		bhand->close_spread();
+		break;
+	case 'q':
+		quit_program = true;
+		break;
+	default:
+		ROS_WARN_STREAM("Unknown option");
 	}
 }
 
-void UVSControl::initialize()
+void Teleop::initialize()
 {
 	if (dof == 7) {
 		ROS_INFO_STREAM("Initializing, please wait...");
@@ -527,15 +511,22 @@ void UVSControl::initialize()
 		ROS_INFO_STREAM("Initialization complete");
 	}
 }
+void Teleop::spin()
+{
+	ros::Rate r(30);
+	while(!quit_program) {
+		r.sleep();
+	}
+}
 
 int main(int argc, char *argv[]) 
 {
-	ros::init(argc, argv, "UVSControl");
+	ros::init(argc, argv, "Teleop");
 	ros::NodeHandle nh_("~");
 	ros::AsyncSpinner spinner(0);
 	spinner.start();
-	UVSControl VS(nh_);
-	// VS.initialize();
-	VS.loop();
+	Teleop RC(nh_);
+	// RC.initialize();
+	RC.spin();
 	return 0;
 }

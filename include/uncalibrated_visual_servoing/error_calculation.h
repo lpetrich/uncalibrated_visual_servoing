@@ -16,6 +16,7 @@
 #include "uncalibrated_visual_servoing/ErrorInfo.h"
 #include "uncalibrated_visual_servoing/TrackPoint.h"
 #include "uncalibrated_visual_servoing/TrackedPoints.h"
+#include "uncalibrated_visual_servoing/EndEffectorPoints.h"
 #include "uncalibrated_visual_servoing/TaskIds.h"
 #include "uncalibrated_visual_servoing/uvs_utilities.h"
 #include <sstream>
@@ -27,16 +28,19 @@
 #include <cstring>
 #include <unistd.h>
 
-
 class ErrorCalculator 
 {
     public:
     	double max;
 		bool calculate_now;
 		bool stereo_vision;
-		bool new_error1;
+		bool new_error;
 		bool new_error2;
+		bool new_eef;
+		bool new_eef2;
 		Eigen::VectorXd task_ids;
+		Eigen::Vector2d end_effector_position;
+		Eigen::Vector2d end_effector_position2;
 		ros::Publisher pub_error;
 		ros::Publisher pub_reset;
 		ros::Publisher pub_end_effector_position;
@@ -52,7 +56,7 @@ class ErrorCalculator
         double parallel_lines(std::vector<Eigen::Vector2d> sub_vector);
         double points_to_conic(std::vector<Eigen::Vector2d> sub_vector);
         double point_to_plane(std::vector<Eigen::Vector2d> sub_vector);
-		void publish_end_effector(double u, double v);
+		void publish_end_effector();
 		void reset();
 		void spin();
 	private:
@@ -68,7 +72,7 @@ class ErrorCalculator
 
 		void callback_centers(const uncalibrated_visual_servoing::TrackedPoints::ConstPtr& msg)
 		{
-			if (calculate_now && !new_error1 && task_ids.size() != 0) {
+			if (calculate_now && !new_error && task_ids.size() != 0) {
 				uncalibrated_visual_servoing::TrackedPoints c = *msg;
 				std::vector<Eigen::Vector2d> v;
 			    for (int i = 0; i < c.points.size(); ++i) {
@@ -77,8 +81,10 @@ class ErrorCalculator
 			        p[1] = c.points[i].y;			        
 			        v.push_back(p);
 			    }
+			    end_effector_position = v[0];
     			current_error_vector = calculate_error(v);
-    			new_error1 = true;
+    			new_error = true;
+    			new_eef = true;
    			}
 		}
         void callback_centers2(const uncalibrated_visual_servoing::TrackedPoints::ConstPtr& msg)
@@ -92,8 +98,10 @@ class ErrorCalculator
 			        p2[1] = c2.points[i].y;
 			        v2.push_back(p2);
 			    }
+			    end_effector_position2 = v2[0];
 		    	current_error_vector2 = calculate_error(v2);
 		    	new_error2 = true;
+		    	new_eef2 = true;
 			}
         }
         void callback_task_ids(const uncalibrated_visual_servoing::TaskIds::ConstPtr& msg)

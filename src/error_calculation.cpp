@@ -4,14 +4,15 @@
 
 #include "uncalibrated_visual_servoing/error_calculation.h"
 
-
 ErrorCalculator::ErrorCalculator(ros::NodeHandle nh_) 
 { // error calculator constructor
 	max = 1.0e7;
 	stereo_vision = false;
 	calculate_now = false;
-	new_error1 = false;
+	new_error = false;
 	new_error2 = false;
+	new_eef = false;
+	new_eef2 = false;
 	// check how many cameras are connected and setup subscribers/publishers
 	ros::V_string nodes;
 	ros::master::getNodes(nodes);
@@ -28,8 +29,7 @@ ErrorCalculator::ErrorCalculator(ros::NodeHandle nh_)
 	sub_task_ids = nh_.subscribe("/task_ids", 3, &ErrorCalculator::callback_task_ids, this);
 	sub_calculate = nh_.subscribe("/calculate", 3, &ErrorCalculator::callback_calculate, this);
 	sub_trackers = nh_.subscribe("/cam1/trackers/centers", 3, &ErrorCalculator::callback_centers, this);
-    pub_reset = nh_.advertise<std_msgs::Bool>("/error_calculation/reset", 10);
-    pub_end_effector_position = nh_.advertise<uncalibrated_visual_servoing::TrackPoint>("/eef_pos", 10);
+    pub_end_effector_position = nh_.advertise<uncalibrated_visual_servoing::TrackedPoints>("/eef_pos", 10);
     pub_error = nh_.advertise<uncalibrated_visual_servoing::Error>("/image_error", 10);
 }
 
@@ -39,7 +39,6 @@ ErrorCalculator::~ErrorCalculator()
 	sub_calculate.shutdown();
 	sub_trackers.shutdown();
 	pub_error.shutdown();
-	pub_reset.shutdown();
 	pub_end_effector_position.shutdown();
 	if (stereo_vision) { 
 		sub_trackers2.shutdown(); 
@@ -71,7 +70,7 @@ void ErrorCalculator::group_error()
 		errors_1D = concatenate_vectorxd(errors_1D, errors_1D2);
 		errors_2D = concatenate_vectorxd(errors_2D, errors_2D2);
 	} 
-	new_error1 = false;
+	new_error = false;
 	new_error2 = false;
 	n1 = normalize_errors(errors_1D, 1);
 	n2 = normalize_errors(errors_2D, 2);
@@ -82,7 +81,7 @@ void ErrorCalculator::group_error()
 	pub_error.publish(error_msg);
 }
 
-std::vector< std::vector<double> > ErrorCalculator::calculate_error(std::vector<Eigen::Vector2d> centers) 
+std::vector< std::vector<double> > ErrorCalculator::calculate_error(std::vector<Eigen::Vector2d> centers)  
 { // calculate error according to task id
 	std::vector<double> error_1D;
 	std::vector<double> error_2D;
@@ -100,7 +99,7 @@ std::vector< std::vector<double> > ErrorCalculator::calculate_error(std::vector<
                 v = point_to_point(sub_vector);
     			error_2D.push_back(v(0));
 				error_2D.push_back(v(1));
-                e = v.norm();
+                // e = v.norm();
                 break;
             case 1:
             	skip = 3;
@@ -114,7 +113,7 @@ std::vector< std::vector<double> > ErrorCalculator::calculate_error(std::vector<
 				v = line_to_line(sub_vector);
     			error_2D.push_back(v(0));
 				error_2D.push_back(v(1));
-                e = v.norm();	                    
+                // e = v.norm();	                    
                 break;
             case 3:
             	skip = 4;
@@ -139,14 +138,14 @@ std::vector< std::vector<double> > ErrorCalculator::calculate_error(std::vector<
                 break;
         }
         start_idx += skip;                   
-        if (fabs(e) > max) {
-        	std::cout << fabs(e) << "\n";
-        	ROS_WARN_STREAM("ErrorCalculator: Lost tracker");
-        	reset();
-			std_msgs::Bool msg;
-			msg.data = true;
-			pub_reset.publish(msg);
-        }
+   //      if (fabs(e) > max) {
+   //      	std::cout << fabs(e) << "\n";
+   //      	ROS_WARN_STREAM("ErrorCalculator: Lost tracker");
+   //      	reset();
+			// std_msgs::Bool msg;
+			// msg.data = true;
+			// pub_reset.publish(msg);
+   //      }
     }
     return_vector.push_back(error_1D);
     return_vector.push_back(error_2D);
@@ -158,9 +157,8 @@ Eigen::VectorXd ErrorCalculator::point_to_point(std::vector<Eigen::Vector2d> v)
 	Eigen::Vector2d robot;
   	Eigen::Vector2d target;
   	Eigen::Vector2d result;
-	target = v[0];
-  	robot = v[1];
-	publish_end_effector(robot(0), robot(1));
+  	robot = v[0];
+	target = v[1];
   	// return result.cwiseAbs(); 
   	return target - robot;
 }
@@ -171,7 +169,6 @@ double ErrorCalculator::point_to_line(std::vector<Eigen::Vector2d> v)
 	robot << v[0](0), v[0](1), 1;
 	p1 << v[1](0), v[1](1), 1;
 	p2 << v[2](0), v[2](1), 1;
-	publish_end_effector(robot(0), robot(1));
   	return p1.cross(p2).dot(robot);
 }
 
@@ -179,11 +176,10 @@ Eigen::VectorXd ErrorCalculator::line_to_line(std::vector<Eigen::Vector2d> v)
 {
 	Eigen::Vector3d r1, r2, p1, p2;
   	Eigen::Vector2d result(2);
-	p1 << v[0](0), v[0](1), 1;
-	p2 << v[1](0), v[1](1), 1;
-	r1 << v[2](0), v[2](1), 1;
-	r2 << v[3](0), v[3](1), 1;
-	publish_end_effector(r1(0), r1(1));
+	r1 << v[0](0), v[0](1), 1;
+	r2 << v[1](0), v[1](1), 1;
+	p1 << v[2](0), v[2](1), 1;
+	p2 << v[3](0), v[3](1), 1;
 	Eigen::Vector3d line = r1.cross(r2);  
 	// double result;
 	// change to 2 dimensional error
@@ -195,11 +191,10 @@ Eigen::VectorXd ErrorCalculator::line_to_line(std::vector<Eigen::Vector2d> v)
 double ErrorCalculator::parallel_lines(std::vector<Eigen::Vector2d> v)
 {
 	Eigen::Vector3d r1, r2, p1, p2, l1, l2, intersection;
-	p1 << v[0](0), v[0](1), 1;
-	p2 << v[1](0), v[1](1), 1;
-	r1 << v[2](0), v[2](1), 1;
-	r2 << v[3](0), v[3](1), 1;
-	publish_end_effector(r1(0), r1(1));
+	r1 << v[0](0), v[0](1), 1;
+	r2 << v[1](0), v[1](1), 1;
+	p1 << v[2](0), v[2](1), 1;
+	p2 << v[3](0), v[3](1), 1;
 	double result;
 	l1 = r1.cross(r2);
 	l2 = p1.cross(p2);
@@ -252,12 +247,22 @@ double ErrorCalculator::point_to_plane(std::vector<Eigen::Vector2d> v)
   	return result; 
 }
 
-void ErrorCalculator::publish_end_effector(double u, double v) 
-{
-  	uncalibrated_visual_servoing::TrackPoint eef_pt;
-	eef_pt.x = u;
-	eef_pt.y = v;
-	pub_end_effector_position.publish(eef_pt);	
+void ErrorCalculator::publish_end_effector() 
+{	//mono vision eef position publisher 
+	//cstephens 19/07/18
+	uncalibrated_visual_servoing::EndEffectorPoints eef_pts; 
+	uncalibrated_visual_servoing::TrackPoint p;
+	p.x = end_effector_position(0);
+	p.y = end_effector_position(1);
+	eef_pts.points.push_back(p);
+	if (stereo_vision) {
+		p.x = end_effector_position2(0);
+		p.y = end_effector_position2(1);
+		eef_pts.points.push_back(p);
+		new_eef2 = false;
+	}
+	new_eef = false;
+	pub_end_effector_position.publish(eef_pts);	
 }
 
 void ErrorCalculator::reset() 
@@ -269,10 +274,13 @@ void ErrorCalculator::reset()
 
 void ErrorCalculator::spin() 
 {
-	ros::Rate r(30);
+	ros::Rate r(30); // check what works best
     while (ros::ok()) {
-    	if ((!stereo_vision && new_error1) || (stereo_vision && new_error1 && new_error2)) {
+    	if ((!stereo_vision && new_error) || (stereo_vision && new_error && new_error2)) {
     		group_error();
+    	} 
+    	if ((!stereo_vision && new_eef) || (stereo_vision && new_eef && new_eef2)) {
+    		publish_end_effector();
     	} 
     	ros::spinOnce();
         r.sleep();

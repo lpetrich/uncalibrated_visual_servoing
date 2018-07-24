@@ -1,19 +1,19 @@
 /* 
- * lpetrich 01/07/18
+ * cstephens & lpetrich 01/07/2018
  */
 
-#ifndef UVS_CONTROL_H
-#define UVS_CONTROL_H
+#ifndef TELEOP_H
+#define TELEOP_H
 
 #include <ros/ros.h>
 #include <iostream>
 #include <stdio.h>
+#include <Eigen/Geometry>
 #include <fstream>
 #include <algorithm>
-#include <Eigen/Geometry>
 #include <boost/timer.hpp>
-#include "std_msgs/Bool.h"
 #include "sensor_msgs/JointState.h"
+#include "std_msgs/Bool.h"
 #include "geometry_msgs/PoseStamped.h"
 #include "geometry_msgs/Point.h"
 #include "wam_control/misc_utilities.h"
@@ -21,10 +21,11 @@
 #include "wam_control/bhand_control.h"
 #include "uncalibrated_visual_servoing/Error.h"
 #include "uncalibrated_visual_servoing/TrackPoint.h"
-#include "uncalibrated_visual_servoing/EndEffectorPoints.h"
+#include "uncalibrated_visual_servoing/Teleop.h"
 #include "uncalibrated_visual_servoing/uvs_utilities.h"
+#include "uncalibrated_visual_servoing/EndEffectorPoints.h"
 
-class UVSControl 
+class Teleop 
 {
 	public:
 		ArmControl *arm;
@@ -32,6 +33,11 @@ class UVSControl
 		bool reset;
 		bool move_now;
 		bool ready_to_grasp;
+		bool quit_program;
+		bool forward;
+		bool backward;
+		bool left;
+		bool right;
 		int dof;
 		int total_joints;
 		double image_tol;
@@ -48,8 +54,8 @@ class UVSControl
 		Eigen::MatrixXd jacobian;
 		Eigen::MatrixXd jacobian_inverse;
 		std::vector<int> active_joints = {1, 1, 1, 1, 1, 1, 1};
-		UVSControl(ros::NodeHandle nh);
-		~UVSControl();
+		Teleop(ros::NodeHandle nh);
+		~Teleop();
 		Eigen::VectorXd calculate_delta_q();
 		Eigen::VectorXd calculate_target(const Eigen::VectorXd& pos, const Eigen::VectorXd& delta);
 		Eigen::VectorXd calculate_step(const Eigen::VectorXd& current_error_value);
@@ -61,8 +67,9 @@ class UVSControl
 		bool broyden_update(double alpha);
 		bool jacobian_estimate(double perturbation_delta);
 		void set_active_joints();
-		void loop(); 
+		void menu(); 
 		void initialize();
+		void spin();
 
 	private:
 		// Callbacks
@@ -151,11 +158,20 @@ class UVSControl
 			if (b) { reset = true; }
 		}
 
-		void move_cb(std_msgs::Bool data) {
-			bool b = data.data;
-			if (b) { move_now = true; } 
-			else { move_now = false; }
+		void move_cb(uncalibrated_visual_servoing::Teleop::ConstPtr moves) {
+			uncalibrated_visual_servoing::Teleop v = *moves;
+			if (v.data[0] == 1) { 
+				forward = true;
+			} else if (v.data[1] == 1) {
+				backward = true;
+			} else if (v.data[2] == 1) {
+				left = true;
+			} else if (v.data[3] == 1) {
+				right = true;
+			} else {
+				forward = backward = left = right = false;
+			}
 		}
 };
 
-#endif // UVS_CONTROL_H
+#endif // TELEOP_H

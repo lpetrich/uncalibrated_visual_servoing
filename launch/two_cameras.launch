@@ -6,6 +6,7 @@
         <node pkg="usb_cam" type="usb_cam_node" name="camera" output="screen">
             <param name="video_device" value="/dev/video0" />
             <param name="framerate" value="15" />
+            <param name="autofocus" value="true" />
         </node>
         <node name="trackers" pkg="mtf_bridge" type="vs_tracker_node" output="screen"> 
             <param name="shm_name" value="shm1"/>
@@ -23,15 +24,16 @@
         <node pkg="usb_cam" type="usb_cam_node" name="camera" output="screen">
             <param name="video_device" value="/dev/video1" />
             <param name="framerate" value="15" />
+            <param name="autofocus" value="true" />
         </node>
         <node name="trackers" pkg="mtf_bridge" type="vs_tracker_node" output="screen"> 
-            <param name="shm_name" value="shm1"/>
-            <remap from="/init_buffer" to="/cam1/init_buffer"/>
-            <remap from="/input_image" to="/cam1/input_image"/>
+            <param name="shm_name" value="shm2"/>
+            <remap from="/init_buffer" to="/cam2/init_buffer"/>
+            <remap from="/input_image" to="/cam2/input_image"/>
             <remap from="/task_coordinates" to="/cam2/task_coordinates"/>
         </node>
         <node name="SharedImageWriter" pkg="mtf_bridge" type="SharedImageWriter" output="screen"> 
-            <param name="shm_name" value="shm1"/>
+            <param name="shm_name" value="shm2"/>
             <remap from="/camera/image_raw" to="/cam2/camera/image_raw"/>
         </node>
     </group> 
