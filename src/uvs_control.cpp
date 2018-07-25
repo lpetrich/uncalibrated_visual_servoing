@@ -139,24 +139,22 @@ bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
 	return false;
 }
 
-bool UVSControl::broyden_update(double alpha)
+bool UVSControl::broyden_update(double alpha, Eigen::VectorXd dy)
 { // update jacobian 
 	Eigen::MatrixXd update(jacobian.rows(), jacobian.cols());
 	Eigen::VectorXd current_eef_position;
-	Eigen::VectorXd dy;
+	// Eigen::VectorXd dy;
 	Eigen::VectorXd dq;
 	double dq_norm;
 
 	dq = calculate_delta_q();
 	dq_norm = dq.norm();
-	if (dq_norm == 0) { return false; }
+	if (dq_norm == 0) { return false; } // return early to avoid dividing by zero
 	current_eef_position = get_eef_position();
 	dy = current_eef_position - previous_eef_position;
 	update = ((( (-dy) - jacobian * dq)) * dq.transpose()) / (dq_norm * dq_norm);
 	previous_jacobian = jacobian;
 	jacobian = jacobian + (alpha * update);
-
-	if (!pseudoInverse(jacobian, jacobian_inverse)) { return false; }
 	// log(filename, "previous eef position: ", previous_eef_position, false);
 	log(filename, "current eef position: ", current_eef_position, false);
 	// log(filename, "dq: ", dq, false);
@@ -218,6 +216,7 @@ int UVSControl::move_step(bool continous_motion)
 void UVSControl::converge(double alpha, int max_iterations, bool continous_motion)
 {
 	int c;
+	Eigen::VectorXd dy;
 	std::cout << "\n**************************************" << std::endl;
 	for (int i = 0; i < max_iterations; ++i) {
 		if (reset) { 
@@ -237,10 +236,14 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 				break;
 			case 2: // step completed successfully
 				std::cout << "BROYDEN UPDATE:" << std::endl;
-				if (!broyden_update(alpha)) { // condition number failed, reset to previous jacobian
+				dy = get_eef_position() - previous_eef_position;
+				log(filename, "dy norm: ", dy.norm(), false);
+				if (dy.norm() > 30) {
+					std::cout << "dy large enough, performing broyden update" << std::endl;
+					if (broyden_update(alpha) && !pseudoInverse(jacobian, jacobian_inverse)) { return false; }
 					jacobian = previous_jacobian;
 					log(filename, "resetting jacobian to: ", jacobian, false);
-				} 
+				}
 				break;
 		}
 		std::cout << "loop duration: " << ros::Time::now() - begin << "\n**************************************" << std::endl;

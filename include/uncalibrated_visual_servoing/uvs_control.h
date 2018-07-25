@@ -58,7 +58,7 @@ class UVSControl
 		Eigen::MatrixXd control_plane_vectors(Eigen::VectorXd & delta_q);
 		void converge(double alpha, int max_iterations, bool continous_motion);
 		int move_step(bool continous_motion);
-		bool broyden_update(double alpha);
+		bool broyden_update(double alpha, Eigen::VectorXd dy);
 		bool jacobian_estimate(double perturbation_delta);
 		void set_active_joints();
 		void loop(); 
