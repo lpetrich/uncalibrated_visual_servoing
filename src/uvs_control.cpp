@@ -34,6 +34,22 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 		exit(EXIT_FAILURE);
 	}
 	ROS_INFO_STREAM("Robot has " << dof << " DOF");
+	// check for stereovision
+	ros::V_string nodes;
+	ros::master::getNodes(nodes);
+	for (int i = 0; i < nodes.size(); i++) {
+		std::string prefix = "/cam2";
+		if(nodes[i].substr(0, prefix.size()) == prefix) {
+			std::cout << "UVS: Found 2 cameras" << std::endl;
+			stereo_vision = true;
+			previous_eef_position.resize(4);
+			break;
+		} 
+	}
+	if (!stereo_vision) { 
+		std::cout << "UVS: Found 1 camera" << std::endl;
+		previous_eef_position.resize(2);
+	}
 	error_sub = nh_.subscribe("/image_error", 1, &UVSControl::error_cb, this);
 	eef_sub = nh_.subscribe("/eef_pos", 1, &UVSControl::eef_cb, this);
 	reset_sub = nh_.subscribe("/reset", 1, &UVSControl::reset_cb, this);
@@ -109,8 +125,7 @@ Eigen::VectorXd UVSControl::calculate_step(const Eigen::VectorXd& current_error_
 { // calculates new motion step to take with the control law: step = −λJ+e 
 	Eigen::VectorXd step;
 	step = -lambda * (jacobian_inverse * current_error_value).transpose();
-	std::cout << "step calculated" << std::endl;
-	step = projected_delta_q(step);
+	// step = projected_delta_q(step);
 	return step;
 }
 
@@ -139,31 +154,20 @@ bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
 	return false;
 }
 
-bool UVSControl::broyden_update(double alpha, Eigen::VectorXd dy)
+bool UVSControl::broyden_update(const Eigen::VectorXd& dy, double alpha)
 { // update jacobian 
 	Eigen::MatrixXd update(jacobian.rows(), jacobian.cols());
-	Eigen::VectorXd current_eef_position;
-	// Eigen::VectorXd dy;
 	Eigen::VectorXd dq;
 	double dq_norm;
-
 	dq = calculate_delta_q();
 	dq_norm = dq.norm();
 	if (dq_norm == 0) { return false; } // return early to avoid dividing by zero
-	current_eef_position = get_eef_position();
-	dy = current_eef_position - previous_eef_position;
 	update = ((( (-dy) - jacobian * dq)) * dq.transpose()) / (dq_norm * dq_norm);
 	previous_jacobian = jacobian;
 	jacobian = jacobian + (alpha * update);
-	// log(filename, "previous eef position: ", previous_eef_position, false);
-	log(filename, "current eef position: ", current_eef_position, false);
-	// log(filename, "dq: ", dq, false);
-	// log(filename, "dq norm: ", dq_norm, false);
-	// log(filename, "dy: ", dy, false);
-	log(filename, "dy norm: ", dy.norm(), false);
+	previous_eef_position = get_eef_position();
 	log(filename, "broyden update: ", update, false);
 	log(filename, "new jacobian: ", jacobian, false);
-	// log(filename, "inverse jacobian: ", jacobian_inverse, false);
 	return true;
 }
 
@@ -191,19 +195,16 @@ int UVSControl::move_step(bool continous_motion)
 	log(filename, "current_error: ", current_error, false);
 	log(filename, "previous_joint_positions: ", previous_joint_positions, false);
 	log(filename, "current_joint_positions: ", current_joint_positions, false);
-	log(filename, "previous_eef_position: ", previous_eef_position, false);
 	log(filename, "step delta: ", step_delta, false);
 	log(filename, "target position: ", target_position, false);
 	std::cout << "Predicted ramp-down time: " << predicted_times[1] << std::endl;
 	std::cout << "Predicted end time: " << predicted_times[2] << std::endl;
 	// save previous state before move
 	previous_joint_positions = current_joint_positions;
-	previous_eef_position = get_eef_position();
+	// previous_eef_position = get_eef_position();
 	arm->call_move_joints(target_position, false);
 	// check for continuous motion and adjust sleep times accordingly
 	if (continous_motion) {
-		// sleep_time = std::max(0.2, predicted_times[1] - 0.05);
-		// sleep_time = std::max(0.3, predicted_times[1] - 0.01);
 		sleep_time = std::min(1.0, std::max(0.3, (predicted_times[1] + predicted_times[2]) * 0.5)); // range between [0.3, 1.0]
 	} else {
 		sleep_time = 1.0;
@@ -235,14 +236,14 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 				log(filename, "target not within joint limits, resetting jacobian to: ", jacobian, false);
 				break;
 			case 2: // step completed successfully
-				std::cout << "BROYDEN UPDATE:" << std::endl;
-				dy = get_eef_position() - previous_eef_position;
+				dy = get_dy();
 				log(filename, "dy norm: ", dy.norm(), false);
 				if (dy.norm() > 30) {
 					std::cout << "dy large enough, performing broyden update" << std::endl;
-					if (broyden_update(alpha) && !pseudoInverse(jacobian, jacobian_inverse)) { return false; }
-					jacobian = previous_jacobian;
-					log(filename, "resetting jacobian to: ", jacobian, false);
+					if (broyden_update(dy, alpha) && !pseudoInverse(jacobian, jacobian_inverse)) { 
+						jacobian = previous_jacobian;
+						log(filename, "resetting jacobian to: ", jacobian, false);
+					}
 				}
 				break;
 		}

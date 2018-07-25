@@ -63,6 +63,7 @@ class ErrorCalculator
 		ros::Subscriber sub_trackers;
 		ros::Subscriber sub_trackers2;
 		ros::Subscriber sub_calculate;
+		ros::Subscriber sub_reset;
 		ros::Subscriber sub_task_ids;
 		std::vector< std::vector<double> > current_error_vector;
 		std::vector< std::vector<double> > current_error_vector2;
@@ -116,8 +117,18 @@ class ErrorCalculator
         void callback_calculate(const std_msgs::Bool::ConstPtr& msg)
         {
 			bool b = msg->data;
-			if (b) { calculate_now = true; }
-			else { reset(); }
+			if (b) { 
+				std::cout << "ECALC: starting calculations" << std::endl;
+				calculate_now = true; 
+			}
+        }
+        void callback_reset(const std_msgs::Bool::ConstPtr& msg)
+        {
+			bool b = msg->data;
+			if (b) { 
+				std::cout << "ECALC: reset received" << std::endl;
+				reset();
+			}
         }
 };
 

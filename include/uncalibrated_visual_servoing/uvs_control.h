@@ -31,6 +31,7 @@ class UVSControl
 		BHandControl *bhand;
 		bool reset;
 		bool ready_to_grasp;
+		bool stereo_vision;
 		int dof;
 		int num_active_joints;
 		double image_tol;
@@ -58,7 +59,7 @@ class UVSControl
 		Eigen::MatrixXd control_plane_vectors(Eigen::VectorXd & delta_q);
 		void converge(double alpha, int max_iterations, bool continous_motion);
 		int move_step(bool continous_motion);
-		bool broyden_update(double alpha, Eigen::VectorXd dy);
+		bool broyden_update(const Eigen::VectorXd& dy, double alpha);
 		bool jacobian_estimate(double perturbation_delta);
 		void set_active_joints();
 		void loop(); 
@@ -72,10 +73,11 @@ class UVSControl
 		ros::Subscriber move_sub;
 		Eigen::VectorXd singular_values;
 		Eigen::VectorXd image_error_vector;
-		Eigen::VectorXd image_eef_pos;
+		Eigen::VectorXd current_eef;
+		Eigen::VectorXd delta_y;
 		bool new_error;
 		bool new_eef;
-		
+
 		bool ready() {
 			if (get_error().size() == 0 || get_eef_position().size() == 0) { 
 				std::cout << "please initialize trackers" << std::endl;
@@ -110,16 +112,17 @@ class UVSControl
 
 		Eigen::VectorXd get_error() 
 		{ 
-			while (!new_error) { continue; }
-			new_error = false;
 			return image_error_vector; 
 		}
 		
 		Eigen::VectorXd get_eef_position() 
 		{ 
-			while (!new_eef) { continue; } // TODO fix so doesn't get stuck in iteration 6
-			new_eef = false;
-			return image_eef_pos; 
+			return current_eef; 
+		}
+
+		Eigen::VectorXd get_dy() 
+		{ 
+			return delta_y; 
 		}
 		
 		void error_cb(uncalibrated_visual_servoing::Error::ConstPtr error) {
@@ -130,25 +133,29 @@ class UVSControl
 		    	e[i] = current_error.error[i]; 
 		    }
 		    image_error_vector = e;
-		    new_error = true;
 		}
 		
-		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr eef) {
-			uncalibrated_visual_servoing::EndEffectorPoints current_eef = *eef;
-			Eigen::VectorXd eef_pos(current_eef.points.size() * 2);
+		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr data) {
+			uncalibrated_visual_servoing::EndEffectorPoints eef = *data;
+			Eigen::VectorXd eef_vector(eef.points.size() * 2);
 			int j = 0;
-			for (int i = 0; i < current_eef.points.size(); ++i) {
-				eef_pos[j] = current_eef.points[i].x; 
-				eef_pos[j+1] = current_eef.points[i].y;
+			for (int i = 0; i < eef.points.size(); ++i) {
+				eef_vector[j] = eef.points[i].x; 
+				eef_vector[j+1] = eef.points[i].y;
 				j += 2;
 			}
-			image_eef_pos = eef_pos;
-			new_eef = true;
+			current_eef = eef_vector;
+			try { 
+				delta_y = current_eef - previous_eef_position;
+			} catch (...) { std::cout << "dy calculation failed" << std::endl; }
 		}
 
 		void reset_cb(std_msgs::Bool data) {
 			bool b = data.data;
-			if (b) { reset = true; }
+			if (b) { 
+				std::cout << "UVS: reset received" << std::endl;
+				reset = true; 
+			}
 		}
 };
 
