@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <fstream>
 #include <algorithm>
-#include <Eigen/Geometry>
+#include <Eigen/Dense>
 #include <boost/timer.hpp>
 #include "std_msgs/Bool.h"
 #include "sensor_msgs/JointState.h"
@@ -50,6 +50,7 @@ class UVSControl
 		std::vector<int> active_joints = {1, 1, 1, 1, 1, 1, 1};
 		UVSControl(ros::NodeHandle nh);
 		~UVSControl();
+		Eigen::VectorXd project_delta_q(const Eigen::VectorXd & delta_q);
 		Eigen::VectorXd calculate_delta_q();
 		Eigen::VectorXd calculate_target(const Eigen::VectorXd& pos, const Eigen::VectorXd& delta);
 		Eigen::VectorXd calculate_step(const Eigen::VectorXd& current_error_value);

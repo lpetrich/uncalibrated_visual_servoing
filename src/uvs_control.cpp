@@ -63,6 +63,32 @@ Eigen::VectorXd UVSControl::calculate_delta_q()
 	return dq;
 }
 
+Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd & delta_q)
+{
+	/*
+	Returns the projection of delta_q that only allows eef rotation about the vertical axis in the base frame.
+	Input: 
+		delta_q:  next VS step in joint manifold tangent space (dof-vector)
+	Output:
+		projected_delta_q, obtained by first obtaining the null space (or kernel) of the angular tool jacobian in the x and y directions, and then
+		projecting delta_q onto the range of this kernel. 
+	cstephens 24/07/2018
+	*/		Eigen::MatrixXd ang_jacobian;
+			Eigen::MatrixXd reduced_ang_jacobian;
+			
+			Eigen::MatrixXd kernel;
+			Eigen::MatrixXd projection_matrix;
+			Eigen::VectorXd projected_delta_q;
+			ang_jacobian = arm->get_ang_tool_jacobian();
+			reduced_ang_jacobian.row(0) = ang_jacobian.row(0);
+			reduced_ang_jacobian.row(1) = ang_jacobian.row(1);
+			Eigen::FullPiVLU<Eigen::MatrixXd> lu(reduced_ang_jacobian);
+			kernel = lu.kernel()
+			projection_matrix = kernel * (kernel.transpose() * kernel ).inverse() * kernel.transpose();
+			projected_delta_q = projection_matrix * delta_q;
+			return projected_delta_q;
+}
+
 Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_state, const Eigen::VectorXd& delta)
 { // calculates target vector in joint space to move to with given delta added to active joints
 	Eigen::VectorXd target_state(total_joints);
