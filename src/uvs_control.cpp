@@ -7,11 +7,10 @@
 UVSControl::UVSControl(ros::NodeHandle nh_) 
 {
 	dof = 0;
-	total_joints = 0;
+	num_active_joints = 0;
 	image_tol = 100.0;
 	default_lambda = 0.15;
 	reset = false;
-	move_now = false;
 	ready_to_grasp = false;
 	// prefix = "/home/laura/ComputerVision/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
 	prefix = "/home/froglake/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
@@ -24,12 +23,12 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 		dof = arm->get_dof();
 	} while (dof == 0);
 	if (dof == 7) {
-		total_joints = 7;
+		num_active_joints = 7;
 		bhand = new BHandControl("/zeus", nh_);
 		bhand->set_spread_velocity(25);
 		bhand->set_grasp_velocity(60);
 	} else if (dof == 4) {
-		total_joints = 4;
+		num_active_joints = 4;
 	} else {
 		ROS_WARN_STREAM("Invalid DOF, reset and try again");
 		exit(EXIT_FAILURE);
@@ -38,7 +37,6 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 	error_sub = nh_.subscribe("/image_error", 1, &UVSControl::error_cb, this);
 	eef_sub = nh_.subscribe("/eef_pos", 1, &UVSControl::eef_cb, this);
 	reset_sub = nh_.subscribe("/reset", 1, &UVSControl::reset_cb, this);
-	move_sub = nh_.subscribe("/move", 1, &UVSControl::move_cb, this);
 }
 
 UVSControl::~UVSControl() 
@@ -50,11 +48,11 @@ UVSControl::~UVSControl()
 Eigen::VectorXd UVSControl::calculate_delta_q()
 { // calculates the actual motion change in joint space to use in Broyden's update
 	Eigen::VectorXd total_dq;
-	Eigen::VectorXd dq(dof);
+	Eigen::VectorXd dq(num_active_joints);
 	Eigen::VectorXd current_joint_positions = arm->get_positions();
 	total_dq = current_joint_positions - previous_joint_positions;
 	int j = 0;
-	for (int i = 0; i < total_joints; ++i) {
+	for (int i = 0; i < dof; ++i) {
 		if (active_joints[i]) {
 			dq[j] = total_dq[i];
 			j++;
@@ -63,7 +61,7 @@ Eigen::VectorXd UVSControl::calculate_delta_q()
 	return dq;
 }
 
-Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd & delta_q)
+Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd& delta_q)
 {
 	/*
 	Returns the projection of delta_q that only allows eef rotation about the vertical axis in the base frame.
@@ -79,11 +77,14 @@ Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd & delta_q)
 			Eigen::MatrixXd kernel;
 			Eigen::MatrixXd projection_matrix;
 			Eigen::VectorXd projected_delta_q;
+			std::cout << "here?" << std::endl;
 			ang_jacobian = arm->get_ang_tool_jacobian();
+			reduced_ang_jacobian.resize(ang_jacobian.rows()-1, ang_jacobian.cols());
 			reduced_ang_jacobian.row(0) = ang_jacobian.row(0);
 			reduced_ang_jacobian.row(1) = ang_jacobian.row(1);
-			Eigen::FullPiVLU<Eigen::MatrixXd> lu(reduced_ang_jacobian);
-			kernel = lu.kernel()
+			Eigen::FullPivLU<Eigen::MatrixXd> lu(reduced_ang_jacobian);
+			kernel = lu.kernel();
+			std::cout << "nope" << std::endl;
 			projection_matrix = kernel * (kernel.transpose() * kernel ).inverse() * kernel.transpose();
 			projected_delta_q = projection_matrix * delta_q;
 			return projected_delta_q;
@@ -91,9 +92,9 @@ Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd & delta_q)
 
 Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_state, const Eigen::VectorXd& delta)
 { // calculates target vector in joint space to move to with given delta added to active joints
-	Eigen::VectorXd target_state(total_joints);
+	Eigen::VectorXd target_state(dof);
 	int j = 0;
-	for (int i = 0; i < total_joints; ++i) {
+	for (int i = 0; i < dof; ++i) {
 		if (active_joints[i]) {
 			target_state[i] = (current_state[i] + delta[j]);
 			j++;
@@ -108,6 +109,8 @@ Eigen::VectorXd UVSControl::calculate_step(const Eigen::VectorXd& current_error_
 { // calculates new motion step to take with the control law: step = −λJ+e 
 	Eigen::VectorXd step;
 	step = -lambda * (jacobian_inverse * current_error_value).transpose();
+	std::cout << "step calculated" << std::endl;
+	step = projected_delta_q(step);
 	return step;
 }
 
@@ -182,7 +185,7 @@ int UVSControl::move_step(bool continous_motion)
 	// grab and use current joint positions, check if valid
 	current_joint_positions = arm->get_positions();
 	target_position = calculate_target(current_joint_positions, step_delta);
-	if (!limit_check(target_position, total_joints)) { return 1; }
+	if (!limit_check(target_position, dof)) { return 1; }
 	// calculate move run time
 	current_velocity = arm->get_velocities();
 	predicted_times = calculate_rampdown_and_endtime(step_delta, current_velocity);
@@ -217,6 +220,11 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 	int c;
 	std::cout << "\n**************************************" << std::endl;
 	for (int i = 0; i < max_iterations; ++i) {
+		if (reset) { 
+			std::cout << "received reset request, exiting converge loop" << std::endl;
+			reset = false;
+			return; 
+		}
 		std::cout << "iteration: " << i << std::endl;
 		ros::Time begin = ros::Time::now();
 		c = move_step(continous_motion);
@@ -249,10 +257,10 @@ void UVSControl::set_active_joints()
 	std::getline(std::cin, line);
 	std::istringstream ss(line); 
 	int n;
-	dof = 0;
+	num_active_joints = 0;
 	while (ss >> n) {
 		active_joints[n-1] = 1;
-		dof += 1;
+		num_active_joints += 1;
 	}
 }
 
@@ -262,11 +270,11 @@ bool UVSControl::jacobian_estimate(double perturbation_delta)
 	Eigen::VectorXd e2;
 	Eigen::VectorXd target;
 	Eigen::VectorXd position;
-	jacobian.resize(get_error().size(), dof);
-	initial_jacobian.resize(get_error().size(), dof);
-	jacobian_inverse.resize(dof, get_error().size());
+	jacobian.resize(get_error().size(), num_active_joints);
+	initial_jacobian.resize(get_error().size(), num_active_joints);
+	jacobian_inverse.resize(num_active_joints, get_error().size());
 	int j = 0;
-	for (int i = 0; i < total_joints ; ++i) {
+	for (int i = 0; i < dof ; ++i) {
 		if (active_joints[i]) {
 			ros::Duration(0.2).sleep();
 			e1 = get_eef_position();
@@ -313,8 +321,8 @@ Eigen::MatrixXd UVSControl::control_plane_vectors(Eigen::VectorXd & delta_q)
 		cstephens 23/07/2018
 	*/
 	Eigen::MatrixXd control_vectors;
-	Eigen::MatrixXd jacobian(3, total_joints); 
-	Eigen::MatrixXd jacobian_inv(total_joints, 3);
+	Eigen::MatrixXd jacobian(3, dof); 
+	Eigen::MatrixXd jacobian_inv(dof, 3);
 	//TODO Eigen::MatrixXd rotation_mat;
 	Eigen::VectorXd d_q_1;
 	Eigen::Vector3d d_x_1;
@@ -428,11 +436,6 @@ void UVSControl::loop()
 	std::string s;
 	lambda = default_lambda; // convergence rate
 	while (ros::ok() && !exit_loop) {
-		if (move_now && ready() && jacobian_initialized) {
-			converge(alpha, 100, continous_motion);
-			lambda = default_lambda;
-			move_now = false;
-		}
 		std::cout << "************************************************************************************************" <<
 			"\nSelect option:" <<
 			"\n\tp: Lock joint position" <<
@@ -471,6 +474,7 @@ void UVSControl::loop()
 			break;
 		case 'j':
 			if (ready()) {
+				num_active_joints = 7;
 				for (int i = 0; i < dof; ++i) { active_joints[i] = 1; }
 				jacobian_initialized = jacobian_estimate(perturbation_delta);
 			}

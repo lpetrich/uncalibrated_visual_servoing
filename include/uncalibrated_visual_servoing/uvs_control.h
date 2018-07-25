@@ -30,10 +30,9 @@ class UVSControl
 		ArmControl *arm;
 		BHandControl *bhand;
 		bool reset;
-		bool move_now;
 		bool ready_to_grasp;
 		int dof;
-		int total_joints;
+		int num_active_joints;
 		double image_tol;
 		double default_lambda;
 		double lambda;
@@ -50,7 +49,7 @@ class UVSControl
 		std::vector<int> active_joints = {1, 1, 1, 1, 1, 1, 1};
 		UVSControl(ros::NodeHandle nh);
 		~UVSControl();
-		Eigen::VectorXd project_delta_q(const Eigen::VectorXd & delta_q);
+		Eigen::VectorXd projected_delta_q(const Eigen::VectorXd& delta_q);
 		Eigen::VectorXd calculate_delta_q();
 		Eigen::VectorXd calculate_target(const Eigen::VectorXd& pos, const Eigen::VectorXd& delta);
 		Eigen::VectorXd calculate_step(const Eigen::VectorXd& current_error_value);
@@ -150,12 +149,6 @@ class UVSControl
 		void reset_cb(std_msgs::Bool data) {
 			bool b = data.data;
 			if (b) { reset = true; }
-		}
-
-		void move_cb(std_msgs::Bool data) {
-			bool b = data.data;
-			if (b) { move_now = true; } 
-			else { move_now = false; }
 		}
 };
 
