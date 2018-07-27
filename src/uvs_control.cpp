@@ -39,6 +39,7 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 	eef_sub = nh_.subscribe("/eef_pos", 1, &UVSControl::eef_cb, this);
 	reset_sub = nh_.subscribe("/reset", 1, &UVSControl::reset_cb, this);
 	move_sub = nh_.subscribe("/move", 1, &UVSControl::move_cb, this);
+	teleop_sub = nh_.subscribe("/teleop", 1, &UVSControl::teleop_cb, this);
 }
 
 UVSControl::~UVSControl() 
@@ -212,6 +213,55 @@ int UVSControl::move_step(bool continous_motion)
 	return 2;
 }
 
+int UVSControl::teleop_move_step(bool continous_motion)
+{ // step through one loop of VS
+	Eigen::VectorXd current_error;
+	Eigen::VectorXd current_joint_positions;
+	Eigen::VectorXd step_delta;
+	Eigen::VectorXd target_position;
+	Eigen::VectorXd predicted_times;
+	Eigen::VectorXd current_velocity;
+	Eigen::MatrixXd control_plane_mat;
+	double sleep_time;
+	// grab and use current error, check for convergence
+	current_error = get_error();
+	if (convergence_check(current_error)) {return 0;}
+	step_delta = calculate_step(current_error);
+	control_plane_mat = control_plane_vectors(step_delta);
+	step_delta = control_plane_mat * teleop_direction;
+	// grab and use current joint positions, check if valid
+	current_joint_positions = arm->get_positions();
+	target_position = calculate_target(current_joint_positions, step_delta);
+	if (!limit_check(target_position, total_joints)) { return 1; }
+	// calculate move run time
+	current_velocity = arm->get_velocities();
+	predicted_times = calculate_rampdown_and_endtime(step_delta, current_velocity);
+	// write to screen for debugging
+	log(filename, "current_error: ", current_error, false);
+	log(filename, "previous_joint_positions: ", previous_joint_positions, false);
+	log(filename, "current_joint_positions: ", current_joint_positions, false);
+	log(filename, "previous_eef_position: ", previous_eef_position, false);
+	log(filename, "step delta: ", step_delta, false);
+	log(filename, "target position: ", target_position, false);
+	std::cout << "Predicted ramp-down time: " << predicted_times[1] << std::endl;
+	std::cout << "Predicted end time: " << predicted_times[2] << std::endl;
+	// save previous state before move
+	previous_joint_positions = current_joint_positions;
+	previous_eef_position = get_eef_position();
+	arm->call_move_joints(target_position, false);
+	// check for continuous motion and adjust sleep times accordingly
+	if (continous_motion) {
+		// sleep_time = std::max(0.2, predicted_times[1] - 0.05);
+		// sleep_time = std::max(0.3, predicted_times[1] - 0.01);
+		sleep_time = std::min(1.0, std::max(0.3, (predicted_times[1] + predicted_times[2]) * 0.5)); // range between [0.3, 1.0]
+	} else {
+		sleep_time = 1.0;
+	}
+	std::cout << "// sleep time: " << sleep_time << std::endl;
+	ros::Duration(sleep_time).sleep();
+	return 2;
+}
+
 void UVSControl::converge(double alpha, int max_iterations, bool continous_motion)
 {
 	int c;
@@ -236,6 +286,41 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 				break;
 		}
 		std::cout << "loop duration: " << ros::Time::now() - begin << "\n**************************************" << std::endl;
+	}
+}
+
+void UVSControl::teleop_converge(double alpha, bool continous_motion)
+{
+	teleop_move = false;
+	int c;
+	int i = 1;
+	std::cout << "\n**************************************" << std::endl;
+	while(true){
+		if(teleop_move)
+		{	
+			std::cout << "received teleop command" << std::endl;
+			teleop_move = false;
+			std::cout << "Move: " << i++ << std::endl;
+			// ros::Time begin = ros::Time::now();
+			c = teleop_move_step(continous_motion);
+			switch (c)
+			{
+				case 0: // convergence - return early
+					return;
+				case 1: // joints out of limit, reset jacobian
+					jacobian = previous_jacobian;
+					log(filename, "target not within joint limits, resetting jacobian to: ", jacobian, false);
+					break;
+				case 2: // step completed successfully
+					std::cout << "BROYDEN UPDATE:" << std::endl;
+					if (!broyden_update(alpha)) { // condition number failed, reset to previous jacobian
+						jacobian = previous_jacobian;
+						log(filename, "resetting jacobian to: ", jacobian, false);
+					} 
+					break;
+			}
+			// std::cout << "loop duration: " << ros::Time::now() - begin << "\n**************************************" << std::endl;
+		}
 	}
 }
 
@@ -304,11 +389,11 @@ Eigen::MatrixXd UVSControl::control_plane_vectors(Eigen::VectorXd & delta_q)
 			//TODO theta: desired rotation of the plane about the delta_q vector, with respect to the vertical axis in the robot base frame.
 
 		Output:
-			control_plane: a dof x 2 matrix with elements in the joint manifold tangent space. 
+			control_plane: a dof x 2 matrix with elements in the joint manifold tangent space. First column is "right" in plane. First is "forward" in plane.
 			The second column is the change in robot joint coordinates from the VS step. Using the tool jacobian to transform this to a direction in robot base
-			coordinates (and normalizing), this defines the cartesian 3-vector that we will define our plane around, e_1.
-			If we take the cross product of e1 with the vertical vector (0, 0, 1)^T, e1 x (0, 0, 1)^T and then rotate about e1 by an angle of (theta - pi/2), 
-			we obtain e2. 
+			coordinates (and normalizing), this defines the cartesian 3-vector that we will define our plane around, e_2.
+			If we take the cross product of e2 with the vertical vector (0, 0, 1)^T, e1 x (0, 0, 1)^T and then rotate about e2 by an angle of (theta - pi/2), 
+			we obtain e1. 
 
 		cstephens 23/07/2018
 	*/
@@ -445,8 +530,9 @@ void UVSControl::loop()
 			"\n\tm: Set continuous motion (current = " << continous_motion << ")" <<
 			"\n\tj: Compute Jacobian" <<
 			"\n\tx: Compute Jacobian with chosen joints" <<
-			"\n\tv: Complete VS convergence with set max iterations " << 
+			"\n\tv: Complete VS convergence with set max iterations" << 
 			"\n\ts: Compute and move one step" <<
+			"\n\tm: Teleop visual servoing using keyboard node" <<
 			"\n\ti: Move to initial position" <<
 			"\n\th: Move to home position" <<
 			"\n\to: Open grasp" <<
@@ -515,6 +601,12 @@ void UVSControl::loop()
 				lambda = default_lambda;
 			} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
 			break;
+
+		case 'm':
+			if (ready() && jacobian_initialized) { 
+				teleop_converge(alpha, false);
+				lambda = default_lambda;
+			} else { ROS_WARN_STREAM("Jacobian is not initialized"); }
 		case 'h':
 			arm->move_to_home_position();
 			break;

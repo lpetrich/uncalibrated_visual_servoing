@@ -31,6 +31,7 @@ class UVSControl
 		BHandControl *bhand;
 		bool reset;
 		bool move_now;
+		bool teleop_move;
 		bool ready_to_grasp;
 		int dof;
 		int total_joints;
@@ -41,6 +42,7 @@ class UVSControl
 		std::string msg;
 		std::string prefix;
 		std::string filename;
+		Eigen::Vector2d teleop_direction;
 		Eigen::VectorXd previous_eef_position;
 		Eigen::VectorXd previous_joint_positions;
 		Eigen::MatrixXd previous_jacobian;
@@ -58,7 +60,9 @@ class UVSControl
 		bool convergence_check(const Eigen::VectorXd& current_error);
 		Eigen::MatrixXd control_plane_vectors(Eigen::VectorXd & delta_q);
 		void converge(double alpha, int max_iterations, bool continous_motion);
+		void converge(double alpha, bool continous_motion);
 		int move_step(bool continous_motion);
+		int teleop_move_step(bool continous_motion);
 		bool broyden_update(double alpha);
 		bool jacobian_estimate(double perturbation_delta);
 		void set_active_joints();
@@ -156,6 +160,11 @@ class UVSControl
 			bool b = data.data;
 			if (b) { move_now = true; } 
 			else { move_now = false; }
+		}
+
+		void teleop_cb(uncalibrated_visual_servoing::KBDirection direction) {
+			teleop_direction << direction.x, direction.y;
+			teleop_move = True;
 		}
 };
 
