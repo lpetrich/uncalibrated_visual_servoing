@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "geometry": "cpp",
+        "cmath": "cpp",
+        "complex": "cpp",
+        "ostream": "cpp",
+        "array": "cpp",
+        "cholesky": "cpp",
+        "core": "cpp",
+        "lu": "cpp",
+        "leastsquares": "cpp",
+        "newstdvector": "cpp",
+        "qr": "cpp",
+        "svd": "cpp",
+        "stdvector": "cpp"
+    }
+}

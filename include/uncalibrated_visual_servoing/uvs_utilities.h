@@ -5,7 +5,7 @@
 #ifndef UVS_UTILITIES_H
 #define UVS_UTILITIES_H
 
-#include <Eigen/Core>
+#include <Eigen/Dense>
 #include <Eigen/SVD>
 #include <ros/ros.h>
 #include <iostream>
@@ -17,6 +17,59 @@
 #include "geometry_msgs/PoseStamped.h"
 #include "sensor_msgs/JointState.h"
 
+Eigen::Quaterniond inwards_normal_to_quaternion(const Eigen::Vector3d& spherical_coords)
+{   // returns the quaternion that gives the orientation of the inward normal vector of a sphere, at a given phi, theta in spherical coords.
+    Eigen::Quaterniond quaternion;
+    double phi = spherical_coords[1];
+    double theta = spherical_coords[2];
+    double c_phi = std::cos(phi);
+    double c_theta = std::cos(theta);
+    double s_phi = std::sin(phi);
+    double s_theta = std::sin(theta);
+    Eigen::Vector3d vertical(0.0, 0.0, 1.0);
+    Eigen::Vector3d inwards_normal((-c_phi * s_theta), (-s_phi * s_theta), (- c_theta));
+    if (inwards_normal.dot(vertical) < -0.95)
+    {
+        quaternion.x() = 0.0;
+        quaternion.y() = -1.0;
+        quaternion.z() = 0.0;
+        quaternion.w() = 0.0;
+    }
+    else 
+    {
+        std::cout << "Inwards normal: \n*****\n" << inwards_normal << "\n*******" << std::endl;
+        quaternion.setFromTwoVectors(inwards_normal, vertical);
+    }
+    return quaternion;
+}
+
+Eigen::Vector3d spherical_to_cartesian(const Eigen::Vector3d spherical_cooords)
+{
+    Eigen::Vector3d cartesian_coords;
+    double r = spherical_cooords[0];
+    double phi = spherical_cooords[1];
+    double theta = spherical_cooords[2];
+    double c_theta = std::cos(theta);
+    double s_theta = std::sin(theta);
+    double c_phi = std::cos(phi);
+    double s_phi = std::sin(phi);
+    cartesian_coords[0] = r * s_theta * c_phi;
+    cartesian_coords[1] = r * s_theta * s_phi;
+    cartesian_coords[2] = r * c_theta;
+    return cartesian_coords;
+}
+
+Eigen::Vector3d cartesian_to_spherical(const Eigen::Vector3d cartesian_coords)
+{
+    Eigen::Vector3d spherical_coords;
+    double x = cartesian_coords[0];
+    double y = cartesian_coords[1];
+    double z = cartesian_coords[2];
+    spherical_coords[0] = std::sqrt(x*x + y*y + z*z);
+    spherical_coords[1] = std::atan2(y, x);
+    spherical_coords[2] = std::atan2(std::sqrt(x*x + y*y), z);
+    return spherical_coords;
+}
 
 Eigen::VectorXd concatenate_vectorxd(const Eigen::VectorXd& v1, const Eigen::VectorXd& v2)
 {
@@ -50,9 +103,36 @@ bool pseudoInverse(const _Matrix_Type_ &a, _Matrix_Type_ &result, double epsilon
              svd.matrixU().adjoint();
 }
 
+Eigen::Quaterniond toQuaternion(const Eigen::Vector3d& RPY)
+{
+	Eigen::Quaterniond q;
+    double roll = RPY[0];
+    double pitch = RPY[1];
+    double yaw = RPY[2];
+        // Abbreviations for the various angular functions
+	double cy = cos(yaw * 0.5);
+	double sy = sin(yaw * 0.5);
+	double cr = cos(roll * 0.5);
+	double sr = sin(roll * 0.5);
+	double cp = cos(pitch * 0.5);
+	double sp = sin(pitch * 0.5);
+
+	q.w() = cy * cr * cp + sy * sr * sp;
+	q.x() = cy * sr * cp - sy * cr * sp;
+	q.y() = cy * cr * sp + sy * sr * cp;
+	q.z() = sy * cr * cp - cy * sr * sp;
+	return q;
+}
+
 Eigen::VectorXd toEulerAngle(const Eigen::VectorXd& q)
 {
     Eigen::VectorXd euler(3);
+    // Eigen::VectorXd q(4);
+    // q[0] = quat[3];
+    // q[1] = quat[1];
+    // q[2] = quat[2];
+    // q[3] = quat[0];
+    
     double roll;
     double pitch;
     double yaw;

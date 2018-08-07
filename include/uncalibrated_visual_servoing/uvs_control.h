@@ -22,6 +22,7 @@
 #include "uncalibrated_visual_servoing/Error.h"
 #include "uncalibrated_visual_servoing/TrackPoint.h"
 #include "uncalibrated_visual_servoing/EndEffectorPoints.h"
+#include "uncalibrated_visual_servoing/Teleop.h"
 #include "uncalibrated_visual_servoing/uvs_utilities.h"
 
 class UVSControl 
@@ -30,17 +31,25 @@ class UVSControl
 		ArmControl *arm;
 		BHandControl *bhand;
 		bool reset;
+		bool move_now;
+		bool teleop_move;
+		int mode = 0;
+		bool flip = false;
 		bool ready_to_grasp;
-		bool stereo_vision;
 		int dof;
-		int num_active_joints;
+		int total_joints;
 		double image_tol;
 		double default_lambda;
 		double lambda;
+		double control_radius;
 		std::string robot_namespace;
 		std::string msg;
 		std::string prefix;
 		std::string filename;
+		Eigen::Vector2d teleop_direction;
+		Eigen::Vector3d temp_object_position;
+		Eigen::Vector3d object_position{0.5, 0.0, 0.0};
+		Eigen::Vector3d spherical_position{0.3, 0.1, 0.0};
 		Eigen::VectorXd previous_eef_position;
 		Eigen::VectorXd previous_joint_positions;
 		Eigen::MatrixXd previous_jacobian;
@@ -50,7 +59,6 @@ class UVSControl
 		std::vector<int> active_joints = {1, 1, 1, 1, 1, 1, 1};
 		UVSControl(ros::NodeHandle nh);
 		~UVSControl();
-		Eigen::VectorXd projected_delta_q(const Eigen::VectorXd& delta_q);
 		Eigen::VectorXd calculate_delta_q();
 		Eigen::VectorXd calculate_target(const Eigen::VectorXd& pos, const Eigen::VectorXd& delta);
 		Eigen::VectorXd calculate_step(const Eigen::VectorXd& current_error_value);
@@ -58,26 +66,30 @@ class UVSControl
 		bool convergence_check(const Eigen::VectorXd& current_error);
 		Eigen::MatrixXd control_plane_vectors(Eigen::VectorXd & delta_q);
 		void converge(double alpha, int max_iterations, bool continous_motion);
+		void teleop_converge(double alpha, int max_iterations, bool continous_motion);
 		int move_step(bool continous_motion);
-		bool broyden_update(const Eigen::VectorXd& dy, double alpha);
+		int teleop_move_step(bool continous_motion);
+		int teleop_grasp_step();
+		bool broyden_update(double alpha);
 		bool jacobian_estimate(double perturbation_delta);
+		bool sphere_move(const Eigen::VectorXd & control_vec);
 		void set_active_joints();
 		void loop(); 
 		void initialize();
+		void teleop_grasp();
 
 	private:
 		// Callbacks
 		ros::Subscriber error_sub;
 		ros::Subscriber eef_sub;
 		ros::Subscriber reset_sub;
-		ros::Subscriber move_sub;
+		ros::Subscriber teleop_sub;
 		Eigen::VectorXd singular_values;
 		Eigen::VectorXd image_error_vector;
-		Eigen::VectorXd current_eef;
-		Eigen::VectorXd delta_y;
+		Eigen::VectorXd image_eef_pos;
 		bool new_error;
 		bool new_eef;
-
+		
 		bool ready() {
 			if (get_error().size() == 0 || get_eef_position().size() == 0) { 
 				std::cout << "please initialize trackers" << std::endl;
@@ -112,17 +124,16 @@ class UVSControl
 
 		Eigen::VectorXd get_error() 
 		{ 
+			while (!new_error) { continue; }
+			new_error = false;
 			return image_error_vector; 
 		}
 		
 		Eigen::VectorXd get_eef_position() 
 		{ 
-			return current_eef; 
-		}
-
-		Eigen::VectorXd get_dy() 
-		{ 
-			return delta_y; 
+			while (!new_eef) { continue; } // TODO fix so doesn't get stuck in iteration 6
+			new_eef = false;
+			return image_eef_pos; 
 		}
 		
 		void error_cb(uncalibrated_visual_servoing::Error::ConstPtr error) {
@@ -133,29 +144,38 @@ class UVSControl
 		    	e[i] = current_error.error[i]; 
 		    }
 		    image_error_vector = e;
+		    new_error = true;
 		}
 		
-		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr data) {
-			uncalibrated_visual_servoing::EndEffectorPoints eef = *data;
-			Eigen::VectorXd eef_vector(eef.points.size() * 2);
+		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr eef) {
+			uncalibrated_visual_servoing::EndEffectorPoints current_eef = *eef;
+			Eigen::VectorXd eef_pos(current_eef.points.size() * 2);
 			int j = 0;
-			for (int i = 0; i < eef.points.size(); ++i) {
-				eef_vector[j] = eef.points[i].x; 
-				eef_vector[j+1] = eef.points[i].y;
+			for (int i = 0; i < current_eef.points.size(); ++i) {
+				eef_pos[j] = current_eef.points[i].x; 
+				eef_pos[j+1] = current_eef.points[i].y;
 				j += 2;
 			}
-			current_eef = eef_vector;
-			try { 
-				delta_y = current_eef - previous_eef_position;
-			} catch (...) { std::cout << "dy calculation failed" << std::endl; }
+			image_eef_pos = eef_pos;
+			new_eef = true;
 		}
 
 		void reset_cb(std_msgs::Bool data) {
 			bool b = data.data;
-			if (b) { 
-				std::cout << "UVS: reset received" << std::endl;
-				reset = true; 
-			}
+			if (b) { reset = true; }
+		}
+
+		// void move_cb(std_msgs::Bool data) {
+		// 	bool b = data.data;
+		// 	if (b) { move_now = true; } 
+		// 	else { move_now = false; }
+		// }
+
+		void teleop_cb(uncalibrated_visual_servoing::Teleop::ConstPtr direction) {
+			uncalibrated_visual_servoing::Teleop command = *direction;
+			teleop_direction[0] = command.dir_2D[0];
+			teleop_direction[1] = command.dir_2D[1];
+			teleop_move = true;
 		}
 };
 

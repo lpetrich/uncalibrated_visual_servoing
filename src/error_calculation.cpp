@@ -26,7 +26,6 @@ ErrorCalculator::ErrorCalculator(ros::NodeHandle nh_)
 		} 
 	}
 	if (!stereo_vision) { std::cout << "ErrorCalculator: Found 1 camera" << std::endl; }
-	sub_reset = nh_.subscribe("/reset", 1, &ErrorCalculator::callback_reset, this);
 	sub_task_ids = nh_.subscribe("/task_ids", 3, &ErrorCalculator::callback_task_ids, this);
 	sub_calculate = nh_.subscribe("/calculate", 3, &ErrorCalculator::callback_calculate, this);
 	sub_trackers = nh_.subscribe("/cam1/trackers/centers", 3, &ErrorCalculator::callback_centers, this);
@@ -270,6 +269,7 @@ void ErrorCalculator::reset()
 {
 	calculate_now = false;
 	task_ids.setZero();
+	std::cout << "ErrorCalculator: resetting\n";
 }
 
 void ErrorCalculator::spin() 
