@@ -16,13 +16,11 @@ find_package(Eigen REQUIRED)
 
 add_message_files(
   FILES
-  TaskIds.msg
   TrackPoint.msg
   TrackedPoints.msg
   EndEffectorPoints.msg
   Error.msg
   ErrorInfo.msg
-  Teleop.msg
 )
 
 generate_messages(
@@ -49,16 +47,3 @@ target_link_libraries(uvs
   bhand_control
 )
 
-add_executable(error_calculation src/error_calculation.cpp)
-target_link_libraries(error_calculation
-  ${catkin_LIBRARIES}
-  ${Eigen_LIBRARIES}
-)
-
-add_executable(teleop src/teleop.cpp)
-target_link_libraries(teleop
-  ${catkin_LIBRARIES}
-  ${Eigen_LIBRARIES}
-  arm_control
-  bhand_control
-)

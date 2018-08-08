@@ -10,10 +10,8 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 	num_active_joints = 0;
 	image_tol = 100.0;
 	default_lambda = 0.15;
-	reset = false;
-	ready_to_grasp = false;
-	// prefix = "/home/laura/ComputerVision/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
-	prefix = "/home/froglake/vs_workspace/src/uncalibrated_visual_servoing/log_data/";
+	new_de = false;
+	prefix = "/home/froglake/irl_workspace/src/irl_experiments/log_data/";
 	filename = prefix + current_time() + ".txt";
 	arm = new ArmControl(nh_);
 	// Get DOF of arm
@@ -42,23 +40,18 @@ UVSControl::UVSControl(ros::NodeHandle nh_)
 		if(nodes[i].substr(0, prefix.size()) == prefix) {
 			std::cout << "UVS: Found 2 cameras" << std::endl;
 			stereo_vision = true;
-			previous_eef_position.resize(4);
 			break;
 		} 
 	}
-	if (!stereo_vision) { 
-		std::cout << "UVS: Found 1 camera" << std::endl;
-		previous_eef_position.resize(2);
-	}
-	error_sub = nh_.subscribe("/image_error", 1, &UVSControl::error_cb, this);
-	eef_sub = nh_.subscribe("/eef_pos", 1, &UVSControl::eef_cb, this);
-	reset_sub = nh_.subscribe("/reset", 1, &UVSControl::reset_cb, this);
+	if (!stereo_vision) { std::cout << "UVS: Found 1 camera" << std::endl; }
+	dRt_sub = nh_.subscribe("/dRt", 1, &UVSControl::dRt_callback, this);
+    dRt_command_pub = nh_.advertise<std_msgs::String>("/dRt_CMD", 10);
 }
 
 UVSControl::~UVSControl() 
-{ // shutdown ROS subscribers properly
-	error_sub.shutdown();
-	eef_sub.shutdown();
+{ // shutdown ROS subscribers and publishers properly
+	dRt_sub.shutdown();
+	dRt_command_pub.shutdown();
 }
 
 Eigen::VectorXd UVSControl::calculate_delta_q()
@@ -77,35 +70,6 @@ Eigen::VectorXd UVSControl::calculate_delta_q()
 	return dq;
 }
 
-Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd& delta_q)
-{
-	/*
-	Returns the projection of delta_q that only allows eef rotation about the vertical axis in the base frame.
-	Input: 
-		delta_q:  next VS step in joint manifold tangent space (dof-vector)
-	Output:
-		projected_delta_q, obtained by first obtaining the null space (or kernel) of the angular tool jacobian in the x and y directions, and then
-		projecting delta_q onto the range of this kernel. 
-	cstephens 24/07/2018
-	*/		Eigen::MatrixXd ang_jacobian;
-			Eigen::MatrixXd reduced_ang_jacobian;
-			
-			Eigen::MatrixXd kernel;
-			Eigen::MatrixXd projection_matrix;
-			Eigen::VectorXd projected_delta_q;
-			std::cout << "here?" << std::endl;
-			ang_jacobian = arm->get_ang_tool_jacobian();
-			reduced_ang_jacobian.resize(ang_jacobian.rows()-1, ang_jacobian.cols());
-			reduced_ang_jacobian.row(0) = ang_jacobian.row(0);
-			reduced_ang_jacobian.row(1) = ang_jacobian.row(1);
-			Eigen::FullPivLU<Eigen::MatrixXd> lu(reduced_ang_jacobian);
-			kernel = lu.kernel();
-			std::cout << "nope" << std::endl;
-			projection_matrix = kernel * (kernel.transpose() * kernel ).inverse() * kernel.transpose();
-			projected_delta_q = projection_matrix * delta_q;
-			return projected_delta_q;
-}
-
 Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_state, const Eigen::VectorXd& delta)
 { // calculates target vector in joint space to move to with given delta added to active joints
 	Eigen::VectorXd target_state(dof);
@@ -121,25 +85,11 @@ Eigen::VectorXd UVSControl::calculate_target(const Eigen::VectorXd& current_stat
 	return target_state;
 }
 
-Eigen::VectorXd UVSControl::calculate_step(const Eigen::VectorXd& current_error_value) 
-{ // calculates new motion step to take with the control law: step = −λJ+e 
-	Eigen::VectorXd step;
-	step = -lambda * (jacobian_inverse * current_error_value).transpose();
-	// step = projected_delta_q(step);
-	return step;
-}
-
 bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
 { // should we make lambda larger as we get closer to the target? Test
 	double pixel_step_size = 30.0;
 	double n = current_error.norm();
 
-	if (n < 300 && !(ready_to_grasp)) {
-		bhand->open_grasp();
-		bhand->open_spread();
-		ready_to_grasp = true;
-		std::cout << "ready to grasp object" << std::endl;
-	}
 	if (n < image_tol) {
 		std::cout << "current error norm is less than image tolerance -- we have arrived at our destination" << std::endl;
 		return true;
@@ -154,7 +104,7 @@ bool UVSControl::convergence_check(const Eigen::VectorXd& current_error)
 	return false;
 }
 
-bool UVSControl::broyden_update(const Eigen::VectorXd& dy, double alpha)
+bool UVSControl::broyden_update(const Eigen::VectorXd& de, double alpha)
 { // update jacobian 
 	Eigen::MatrixXd update(jacobian.rows(), jacobian.cols());
 	Eigen::VectorXd dq;
@@ -162,18 +112,28 @@ bool UVSControl::broyden_update(const Eigen::VectorXd& dy, double alpha)
 	dq = calculate_delta_q();
 	dq_norm = dq.norm();
 	if (dq_norm == 0) { return false; } // return early to avoid dividing by zero
-	update = ((( (-dy) - jacobian * dq)) * dq.transpose()) / (dq_norm * dq_norm);
+	std::cout << (dq.transpose() * dq) << " ==? " << (dq_norm * dq_norm) << std::endl;
+    update = ((de - jacobian * dq) * dq.transpose()) / (dq.transpose() * dq);
+	// update = ((((-de) - jacobian * dq)) * dq.transpose()) / (dq_norm * dq_norm);
 	previous_jacobian = jacobian;
 	jacobian = jacobian + (alpha * update);
-	previous_eef_position = get_eef_position();
+	// previous_eef_position = get_eef_position();
 	log(filename, "broyden update: ", update, false);
 	log(filename, "new jacobian: ", jacobian, false);
 	return true;
 }
 
+Eigen::VectorXd UVSControl::calculate_step(const Eigen::VectorXd& current_error_value) 
+{ // calculates new motion step to take with the control law: step = −λJ+e 
+	Eigen::VectorXd step;
+	step = -lambda * (jacobian_inverse * current_error_value).transpose();
+	// step = projected_delta_q(step);
+	return step;
+}
+
 int UVSControl::move_step(bool continous_motion)
 { // step through one loop of VS
-	Eigen::VectorXd current_error;
+	Eigen::VectorXd delta_e;
 	Eigen::VectorXd current_joint_positions;
 	Eigen::VectorXd step_delta;
 	Eigen::VectorXd target_position;
@@ -181,50 +141,39 @@ int UVSControl::move_step(bool continous_motion)
 	Eigen::VectorXd current_velocity;
 	double sleep_time;
 	// grab and use current error, check for convergence
-	current_error = get_error();
-	if (convergence_check(current_error)) {return 0;}
-	step_delta = calculate_step(current_error);
+	// current_error = get_error();
+	delta_e = get_dRt();
+	if (convergence_check(delta_e)) {return 0;}
+	step_delta = calculate_step(delta_e);
 	// grab and use current joint positions, check if valid
 	current_joint_positions = arm->get_positions();
 	target_position = calculate_target(current_joint_positions, step_delta);
 	if (!limit_check(target_position, dof)) { return 1; }
-	// calculate move run time
-	current_velocity = arm->get_velocities();
-	predicted_times = calculate_rampdown_and_endtime(step_delta, current_velocity);
 	// write to screen for debugging
-	log(filename, "current_error: ", current_error, false);
+	log(filename, "delta_e: ", delta_e, false);
 	log(filename, "previous_joint_positions: ", previous_joint_positions, false);
 	log(filename, "current_joint_positions: ", current_joint_positions, false);
 	log(filename, "step delta: ", step_delta, false);
 	log(filename, "target position: ", target_position, false);
-	std::cout << "Predicted ramp-down time: " << predicted_times[1] << std::endl;
-	std::cout << "Predicted end time: " << predicted_times[2] << std::endl;
-	// save previous state before move
 	previous_joint_positions = current_joint_positions;
-	// previous_eef_position = get_eef_position();
 	arm->call_move_joints(target_position, false);
 	// check for continuous motion and adjust sleep times accordingly
-	if (continous_motion) {
-		sleep_time = std::min(1.0, std::max(0.3, (predicted_times[1] + predicted_times[2]) * 0.5)); // range between [0.3, 1.0]
-	} else {
-		sleep_time = 1.0;
-	}
-	std::cout << "// sleep time: " << sleep_time << std::endl;
-	ros::Duration(sleep_time).sleep();
+	// if (continous_motion) {
+	// 	sleep_time = std::min(1.0, std::max(0.3, (predicted_times[1] + predicted_times[2]) * 0.5)); // range between [0.3, 1.0]
+	// } else {
+	// 	sleep_time = 1.0;
+	// }
+	// std::cout << "// sleep time: " << sleep_time << std::endl;
+	ros::Duration(0.3).sleep();
 	return 2;
 }
 
 void UVSControl::converge(double alpha, int max_iterations, bool continous_motion)
 {
 	int c;
-	Eigen::VectorXd dy;
+	Eigen::VectorXd delta_e;
 	std::cout << "\n**************************************" << std::endl;
 	for (int i = 0; i < max_iterations; ++i) {
-		if (reset) { 
-			std::cout << "received reset request, exiting converge loop" << std::endl;
-			reset = false;
-			return; 
-		}
 		std::cout << "iteration: " << i << std::endl;
 		ros::Time begin = ros::Time::now();
 		c = move_step(continous_motion);
@@ -236,11 +185,12 @@ void UVSControl::converge(double alpha, int max_iterations, bool continous_motio
 				log(filename, "target not within joint limits, resetting jacobian to: ", jacobian, false);
 				break;
 			case 2: // step completed successfully
-				dy = get_dy();
-				log(filename, "dy norm: ", dy.norm(), false);
-				if (dy.norm() > 30) {
-					std::cout << "dy large enough, performing broyden update" << std::endl;
-					if (broyden_update(dy, alpha) && !pseudoInverse(jacobian, jacobian_inverse)) { 
+			// experiment with what is a good step size given the new error vector
+				delta_e = get_dRt();
+				log(filename, "delta_e norm: ", delta_e.norm(), false);
+				if (delta_e.norm() > 30) {
+					std::cout << "delta_e large enough, performing broyden update" << std::endl;
+					if (broyden_update(delta_e, alpha) && !pseudoInverse(jacobian, jacobian_inverse)) { 
 						jacobian = previous_jacobian;
 						log(filename, "resetting jacobian to: ", jacobian, false);
 					}
@@ -270,38 +220,42 @@ void UVSControl::set_active_joints()
 
 bool UVSControl::jacobian_estimate(double perturbation_delta) 
 { // perturb each active joint for the initial jacobian estimation
-	Eigen::VectorXd e1;
-	Eigen::VectorXd e2;
+	publish_dRt_command("0");
+	ros::Duration(0.5).sleep();
+	Eigen::VectorXd delta_e;
 	Eigen::VectorXd target;
 	Eigen::VectorXd position;
-	jacobian.resize(get_error().size(), num_active_joints);
-	initial_jacobian.resize(get_error().size(), num_active_joints);
-	jacobian_inverse.resize(num_active_joints, get_error().size());
+	publish_dRt_command("1");
+	ros::Duration(0.5).sleep();
+	int sz = get_dRt().size();
+	jacobian.resize(sz, num_active_joints);
+	initial_jacobian.resize(sz, num_active_joints);
+	jacobian_inverse.resize(num_active_joints, sz);
 	int j = 0;
+	std::string s;
 	for (int i = 0; i < dof ; ++i) {
 		if (active_joints[i]) {
+			std::getline(std::cin, s);
 			ros::Duration(0.2).sleep();
-			e1 = get_eef_position();
 			position = arm->get_positions();
 			target = vector_target(position, i, perturbation_delta);
 			arm->call_move_joints(target, true);
 			ros::Duration(0.2).sleep();
-			e2 = get_eef_position();
+			publish_dRt_command("1");
+			delta_e = get_dRt();
 			ros::Duration(0.2).sleep();
 			arm->call_move_joints(position, true);
-			jacobian.col(j) = (e1 - e2) / perturbation_delta;
+			jacobian.col(j) = delta_e / perturbation_delta;
 			j++;
 		}
 	}
 	initial_jacobian = jacobian;
 	previous_joint_positions = arm->get_positions();
-	previous_eef_position = get_eef_position();
+	previous_delta_e = delta_e;
 	if (!pseudoInverse(jacobian, jacobian_inverse)) { 
 		std::cout << "Initial jacobian estimate failed -- condition number too large" << std::endl;
 		return false; 
 	}
-	log(filename, "initial jacobian: ", initial_jacobian, false);
-	log(filename, "inverse jacobian: ", jacobian_inverse, false);
 	return true;
 }
 
@@ -426,22 +380,55 @@ Eigen::VectorXd UVSControl::calculate_rampdown_and_endtime(const Eigen::VectorXd
 }
 
 
+Eigen::VectorXd UVSControl::projected_delta_q(const Eigen::VectorXd& delta_q)
+{
+	/*
+	Returns the projection of delta_q that only allows eef rotation about the vertical axis in the base frame.
+	Input: 
+		delta_q:  next VS step in joint manifold tangent space (dof-vector)
+	Output:
+		projected_delta_q, obtained by first obtaining the null space (or kernel) of the angular tool jacobian in the x and y directions, and then
+		projecting delta_q onto the range of this kernel. 
+	cstephens 24/07/2018
+	*/		
+	Eigen::MatrixXd ang_jacobian;
+	Eigen::MatrixXd reduced_ang_jacobian;
+	
+	Eigen::MatrixXd kernel;
+	Eigen::MatrixXd projection_matrix;
+	Eigen::VectorXd projected_delta_q;
+	ang_jacobian = arm->get_ang_tool_jacobian();
+	reduced_ang_jacobian.resize(ang_jacobian.rows()-1, ang_jacobian.cols());
+	reduced_ang_jacobian.row(0) = ang_jacobian.row(0);
+	reduced_ang_jacobian.row(1) = ang_jacobian.row(1);
+	Eigen::FullPivLU<Eigen::MatrixXd> lu(reduced_ang_jacobian);
+	kernel = lu.kernel();
+	projection_matrix = kernel * (kernel.transpose() * kernel ).inverse() * kernel.transpose();
+	projected_delta_q = projection_matrix * delta_q;
+	return projected_delta_q;
+}
+
+
 void UVSControl::loop()
 { // main loop for user interaction
 	bool jacobian_initialized = false;
 	bool exit_loop = false;
 	bool continous_motion = true;
-	double perturbation_delta = 0.0875;
+	double perturbation_delta = 0.0349066;
+	// double perturbation_delta = 0.0875;
 	double alpha = 1.0; // update rate
 	int max_iterations = 25;
 	double d;
 	int c;
+	Eigen::VectorXd start_position(7);
+	start_position << 0.21147, 0.768076, -0.0682357, 1.73757, -0.782726, -0.637551, 0.542801; 
 	std::string line;
 	std::string s;
 	lambda = default_lambda; // convergence rate
 	while (ros::ok() && !exit_loop) {
 		std::cout << "************************************************************************************************" <<
 			"\nSelect option:" <<
+			"\n\te: Move to experiment starting position" <<
 			"\n\tp: Lock joint position" <<
 			"\n\tu: Unlock joint position" <<
 			"\n\td: Set Jacobian delta movement (current = " << perturbation_delta << ")" <<
@@ -464,6 +451,9 @@ void UVSControl::loop()
 			"\n\t>> " << std::endl;
 		std::getline(std::cin, line);
 		switch (line[0]) {
+		case 'e':
+			arm->call_move_joints(start_position, true);
+			break;
 		case 'm':
 			s = string_input("Would you like to set motion to continuous or non-continuous?"); // wam_control --> misc_utilities.h
 			if (s[0] == 'c' || s[0] == 'C') { continous_motion = true; } 
@@ -477,23 +467,18 @@ void UVSControl::loop()
 			arm->lock_joint_position(false);
 			break;
 		case 'j':
-			if (ready()) {
-				num_active_joints = 7;
-				for (int i = 0; i < dof; ++i) { active_joints[i] = 1; }
-				jacobian_initialized = jacobian_estimate(perturbation_delta);
-			}
+			num_active_joints = 7;
+			for (int i = 0; i < dof; ++i) { active_joints[i] = 1; }
+			jacobian_initialized = jacobian_estimate(perturbation_delta);
 			break;
 		case 'x':
-			if (ready()) { 
-				set_active_joints();
-				jacobian_initialized = jacobian_estimate(perturbation_delta);
-			}
+			set_active_joints();
+			jacobian_initialized = jacobian_estimate(perturbation_delta);
 			break;
 		case 'i':
 			arm->move_to_initial_position();
 			bhand->open_grasp();
 			bhand->close_spread();
-			ready_to_grasp = false;
 			break;
 		case 'd':
 			perturbation_delta = degreesToRadians(double_input(1, 20));
@@ -547,6 +532,16 @@ void UVSControl::loop()
 		}
 	}
 }
+
+void UVSControl::publish_dRt_command(std::string s)
+{
+	std_msgs::String msg;
+    // std::stringstream ss;
+    // ss << s;
+    msg.data = s;
+    dRt_command_pub.publish(msg);
+}
+
 
 void UVSControl::initialize()
 {

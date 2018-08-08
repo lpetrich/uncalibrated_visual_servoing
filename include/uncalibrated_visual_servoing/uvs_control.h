@@ -13,6 +13,7 @@
 #include <Eigen/Dense>
 #include <boost/timer.hpp>
 #include "std_msgs/Bool.h"
+#include "std_msgs/String.h"
 #include "sensor_msgs/JointState.h"
 #include "geometry_msgs/PoseStamped.h"
 #include "geometry_msgs/Point.h"
@@ -29,8 +30,6 @@ class UVSControl
 	public:
 		ArmControl *arm;
 		BHandControl *bhand;
-		bool reset;
-		bool ready_to_grasp;
 		bool stereo_vision;
 		int dof;
 		int num_active_joints;
@@ -41,13 +40,15 @@ class UVSControl
 		std::string msg;
 		std::string prefix;
 		std::string filename;
-		Eigen::VectorXd previous_eef_position;
+		Eigen::VectorXd previous_delta_e;
 		Eigen::VectorXd previous_joint_positions;
 		Eigen::MatrixXd previous_jacobian;
 		Eigen::MatrixXd initial_jacobian;
 		Eigen::MatrixXd jacobian;
 		Eigen::MatrixXd jacobian_inverse;
 		std::vector<int> active_joints = {1, 1, 1, 1, 1, 1, 1};
+		ros::Publisher dRt_command_pub;
+
 		UVSControl(ros::NodeHandle nh);
 		~UVSControl();
 		Eigen::VectorXd projected_delta_q(const Eigen::VectorXd& delta_q);
@@ -64,27 +65,13 @@ class UVSControl
 		void set_active_joints();
 		void loop(); 
 		void initialize();
+		void publish_dRt_command(std::string s);
 
 	private:
 		// Callbacks
-		ros::Subscriber error_sub;
-		ros::Subscriber eef_sub;
-		ros::Subscriber reset_sub;
-		ros::Subscriber move_sub;
-		Eigen::VectorXd singular_values;
-		Eigen::VectorXd image_error_vector;
-		Eigen::VectorXd current_eef;
-		Eigen::VectorXd delta_y;
-		bool new_error;
-		bool new_eef;
-
-		bool ready() {
-			if (get_error().size() == 0 || get_eef_position().size() == 0) { 
-				std::cout << "please initialize trackers" << std::endl;
-				return false; 
-			}
-			else { return true; }
-		}
+		ros::Subscriber dRt_sub;
+		Eigen::VectorXd de;
+		bool new_de;
 
 		/// Moore-Penrose pseudoinverse - Implementation taken from: http://eigen.tuxfamily.org/bz/show_bug.cgi?id=257
 		template<typename _Matrix_Type_>
@@ -94,68 +81,59 @@ class UVSControl
 		    Eigen::JacobiSVD<Eigen::MatrixXd> svd = a.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
 		    Eigen::VectorXd singular_values = svd.singularValues();
 		    double cond = (singular_values(0) / singular_values(singular_values.size()-1));
-		    log(filename, "singular values: ", singular_values, false);
-		    log(filename, "condition number: ", cond, false);
+		    // log(filename, "singular values: ", singular_values, false);
+		    // log(filename, "condition number: ", cond, false);
 		    if (cond > max) { 
 			    singular_values(singular_values.size()-1) = 0;
 			    double cond = (singular_values(0) / singular_values(singular_values.size()-2));
-			    std::cout << "condition number failed, setting smallest singular value to 0" << std::endl;
-			    log(filename, "new singular values: ", singular_values, false);
-			    log(filename, "new condition number: ", cond, false);
+			    // std::cout << "condition number failed, setting smallest singular value to 0" << std::endl;
+			    // log(filename, "new singular values: ", singular_values, false);
+			    // log(filename, "new condition number: ", cond, false);
 		    } 
 		    typename _Matrix_Type_::Scalar tolerance = epsilon * std::max(a.cols(), a.rows()) * singular_values.array().abs().maxCoeff();
 		    result = svd.matrixV() * _Matrix_Type_( (singular_values.array().abs() >
 		             tolerance).select(singular_values.array().inverse(), 0) ).asDiagonal() *
 		             svd.matrixU().adjoint();
+			log(filename, "jacobian: ", a, false);
+			log(filename, "jacobian inverse: ", result, false);
 		    return true;
 		}
 
-		Eigen::VectorXd get_error() 
-		{ 
-			return image_error_vector; 
-		}
-		
-		Eigen::VectorXd get_eef_position() 
-		{ 
-			return current_eef; 
+		bool ready() {
+			if (get_dRt().size() == 0) { 
+				std::cout << "waiting for delta e" << std::endl;
+				return false; 
+			}
+			else { return true; }
 		}
 
-		Eigen::VectorXd get_dy() 
-		{ 
-			return delta_y; 
+		Eigen::VectorXd get_dRt() {
+			while (!new_de) { 
+				//std::cout << "waiting for new delta e" << std::endl;
+				continue; 
+			}
+			new_de = false;
+			log(filename, "de: ", de, false);
+			return de; 
 		}
 		
-		void error_cb(uncalibrated_visual_servoing::Error::ConstPtr error) {
-			uncalibrated_visual_servoing::Error current_error = *error;
-			int sz = current_error.error.size();
-	    	Eigen::VectorXd e(sz);
-		    for(int i = 0; i < sz; ++i) { 
-		    	e[i] = current_error.error[i]; 
-		    }
-		    image_error_vector = e;
-		}
-		
-		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr data) {
-			uncalibrated_visual_servoing::EndEffectorPoints eef = *data;
-			Eigen::VectorXd eef_vector(eef.points.size() * 2);
-			int j = 0;
-			for (int i = 0; i < eef.points.size(); ++i) {
-				eef_vector[j] = eef.points[i].x; 
-				eef_vector[j+1] = eef.points[i].y;
-				j += 2;
-			}
-			current_eef = eef_vector;
-			try { 
-				delta_y = current_eef - previous_eef_position;
-			} catch (...) { std::cout << "dy calculation failed" << std::endl; }
-		}
-
-		void reset_cb(std_msgs::Bool data) {
-			bool b = data.data;
-			if (b) { 
-				std::cout << "UVS: reset received" << std::endl;
-				reset = true; 
-			}
+		void dRt_callback(std_msgs::String::ConstPtr msg) {
+	    	std::vector<double> v;
+	    	double d;
+	    	std::stringstream ss;
+	    	ss << msg->data.c_str();
+	    	std::cout<<"i'm hrere 1"<<std::endl;
+	    	while (ss >> d) {
+	    		v.push_back(d);
+	    	}
+	    	Eigen::VectorXd v2(v.size());
+	    	for (int i = 0; i < v.size(); ++i) {
+	    		v2[i] = v[i];
+	    		std::cout<<"v2"<<v[i]<<std::endl;
+	    	}
+			de = v2;
+			std::cout<<"de assigned"<<std::endl;
+			new_de = true;
 		}
 };
 
