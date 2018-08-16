@@ -17,7 +17,6 @@
 #include "uncalibrated_visual_servoing/TrackPoint.h"
 #include "uncalibrated_visual_servoing/TrackedPoints.h"
 #include "uncalibrated_visual_servoing/EndEffectorPoints.h"
-#include "uncalibrated_visual_servoing/TaskIds.h"
 #include "uncalibrated_visual_servoing/uvs_utilities.h"
 #include <sstream>
 #include <vector>
@@ -104,15 +103,19 @@ class ErrorCalculator
 		    	new_eef2 = true;
 			}
         }
-        void callback_task_ids(const uncalibrated_visual_servoing::TaskIds::ConstPtr& msg)
-        {
-        	uncalibrated_visual_servoing::TaskIds tasks = *msg;
-        	Eigen::VectorXd temp(tasks.ids.size());
-        	for (int i = 0; i < tasks.ids.size(); ++i) {
-        		temp[i] = tasks.ids[i];
-        	}
-			task_ids = temp;
-        }
+
+
+        // void callback_task_ids(const assistive_uncalibrated_visual_servoing::TaskIds::ConstPtr& msg)
+        // {
+        // 	assistive_uncalibrated_visual_servoing::TaskIds tasks = *msg;
+        // 	Eigen::VectorXd temp(tasks.ids.size());
+        // 	for (int i = 0; i < tasks.ids.size(); ++i) {
+        // 		temp[i] = tasks.ids[i];
+        // 	}
+		// 	task_ids = temp;
+        // }
+
+
         void callback_calculate(const std_msgs::Bool::ConstPtr& msg)
         {
 			bool b = msg->data;

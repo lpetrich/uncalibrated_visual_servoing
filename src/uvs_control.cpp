@@ -53,6 +53,7 @@ bool UVSControl::sphere_move(const Eigen::VectorXd & control_vec)
 	Eigen::Quaterniond quaternion;
 	Eigen::VectorXd ortn(4);
 	Eigen::VectorXd full_pose(7);
+	Eigen::Vector3d cart_pos;
 	Eigen::Vector3d delta = control_vec;
 	
 	if (flip){delta[2] *= -1.0;}
@@ -90,9 +91,14 @@ bool UVSControl::sphere_move(const Eigen::VectorXd & control_vec)
 	// full_pose[4] = -0.90178;
 	// full_pose[5] = 0.0;
 	// full_pose[6] = 0.422618;
-	arm->pose_move(full_pose);
+	// arm->pose_move(full_pose);
+	arm->lock_eef_orientation2(false);
+	arm->call_move_orientation(ortn);
+	ros::Duration(2.0).sleep();
+	arm->lock_eef_orientation2(true);
+	arm->call_move_cartesian(goal_cartesian);
 	std::cout << "Done move" << std::endl;
-	// ros::Duration(10.0).sleep();
+	ros::Duration(2.0).sleep();
 	return true;
 }
 

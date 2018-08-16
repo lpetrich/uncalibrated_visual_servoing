@@ -19,10 +19,10 @@
 #include "wam_control/misc_utilities.h"
 #include "wam_control/arm_control.h"
 #include "wam_control/bhand_control.h"
-#include "uncalibrated_visual_servoing/Error.h"
-#include "uncalibrated_visual_servoing/TrackPoint.h"
-#include "uncalibrated_visual_servoing/EndEffectorPoints.h"
-#include "uncalibrated_visual_servoing/Teleop.h"
+#include "assistive_uncalibrated_visual_servoing/Teleop.h"
+#include "assistive_uncalibrated_visual_servoing/Error.h"
+#include "assistive_uncalibrated_visual_servoing/TrackPoint.h"
+#include "assistive_uncalibrated_visual_servoing/EndEffectorPoints.h"
 #include "uncalibrated_visual_servoing/uvs_utilities.h"
 
 class UVSControl 
@@ -136,8 +136,8 @@ class UVSControl
 			return image_eef_pos; 
 		}
 		
-		void error_cb(uncalibrated_visual_servoing::Error::ConstPtr error) {
-			uncalibrated_visual_servoing::Error current_error = *error;
+		void error_cb(assistive_uncalibrated_visual_servoing::Error::ConstPtr error) {
+			assistive_uncalibrated_visual_servoing::Error current_error = *error;
 			int sz = current_error.error.size();
 	    	Eigen::VectorXd e(sz);
 		    for(int i = 0; i < sz; ++i) { 
@@ -147,8 +147,8 @@ class UVSControl
 		    new_error = true;
 		}
 		
-		void eef_cb(uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr eef) {
-			uncalibrated_visual_servoing::EndEffectorPoints current_eef = *eef;
+		void eef_cb(assistive_uncalibrated_visual_servoing::EndEffectorPoints::ConstPtr eef) {
+			assistive_uncalibrated_visual_servoing::EndEffectorPoints current_eef = *eef;
 			Eigen::VectorXd eef_pos(current_eef.points.size() * 2);
 			int j = 0;
 			for (int i = 0; i < current_eef.points.size(); ++i) {
@@ -171,8 +171,8 @@ class UVSControl
 		// 	else { move_now = false; }
 		// }
 
-		void teleop_cb(uncalibrated_visual_servoing::Teleop::ConstPtr direction) {
-			uncalibrated_visual_servoing::Teleop command = *direction;
+		void teleop_cb(assistive_uncalibrated_visual_servoing::Teleop::ConstPtr direction) {
+			assistive_uncalibrated_visual_servoing::Teleop command = *direction;
 			teleop_direction[0] = command.dir_2D[0];
 			teleop_direction[1] = command.dir_2D[1];
 			teleop_move = true;

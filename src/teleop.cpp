@@ -1,5 +1,5 @@
 #include <ros/ros.h>
-#include "uncalibrated_visual_servoing/Teleop.h"
+#include "assistive_uncalibrated_visual_servoing/Teleop.h"
 #include <signal.h>
 #include <termios.h>
 #include <stdio.h>
@@ -30,7 +30,7 @@ private:
 VSTeleop::VSTeleop()
 {
   direction = {0.0, 0.0};
-  dir_pub = nh_.advertise<uncalibrated_visual_servoing::Teleop>("/teleop", 1);
+  dir_pub = nh_.advertise<assistive_uncalibrated_visual_servoing::Teleop>("/teleop", 1);
 }
 
 int kfd = 0;
@@ -132,7 +132,7 @@ void VSTeleop::keyLoop()
         break;
           
     }
-    uncalibrated_visual_servoing::Teleop kb_direction;
+    assistive_uncalibrated_visual_servoing::Teleop kb_direction;
     kb_direction.dir_2D.push_back(direction[0]);
     kb_direction.dir_2D.push_back(direction[1]);
     if(dirty ==true)
