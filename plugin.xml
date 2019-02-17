@@ -1,0 +1,17 @@
+<library path="src">
+  <class name="UVSGui" type="uncalibrated_visual_servoing.uvs_gui_plugin.UVSGuiPlugin" base_class_type="rqt_gui_py::Plugin">
+    <description>
+    Display for uncalibrated visual servoing of WAM.
+    </description>
+    <qtgui>
+      <group>
+        <label>Visualization</label>
+        <icon type="theme">folder</icon>
+        <statustip>Plugins related to visualization.</statustip>
+      </group>
+      <label>UVS GUI</label>
+      <icon type="theme">video-display</icon>
+      <statustip>UVS GUI</statustip>
+    </qtgui>
+  </class>
+</library>

@@ -1,0 +1,15 @@
+<!--
+    Author: Laura Petrich
+    Visual Servoing Interface
+-->
+
+<launch>
+
+    <node pkg="usb_cam" type="usb_cam_node" name="usb">
+        <param name="video_device" value="/dev/video0" />
+        <param name="framerate" value="15" />
+    </node>
+
+    <node pkg="uncalibrated_visual_servoing" type="uvs_gui" name="uvs_gui" output="screen"/> 
+
+</launch>

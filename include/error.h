@@ -12,12 +12,13 @@
 #include "std_msgs/String.h"
 #include "std_msgs/Bool.h" 
 #include "std_msgs/UInt32.h" 
-#include "uncalibrated_visual_servoing/Error.h"
-#include "uncalibrated_visual_servoing/ErrorInfo.h"
-#include "uncalibrated_visual_servoing/TrackPoint.h"
-#include "uncalibrated_visual_servoing/TrackedPoints.h"
-#include "uncalibrated_visual_servoing/EndEffectorPoints.h"
-#include "uncalibrated_visual_servoing/uvs_utilities.h"
+#include "hil_servoing/Error.h"
+#include "hil_servoing/ErrorInfo.h"
+#include "hil_servoing/TrackPoint.h"
+#include "hil_servoing/TrackedPoints.h"
+#include "hil_servoing/EndEffectorPoints.h"
+#include "hil_servoing/TaskIds.h"
+#include "hil_servoing/hil_utilities.h"
 #include <sstream>
 #include <vector>
 #include <Eigen/Core>
@@ -26,6 +27,7 @@
 #include <stdlib.h>
 #include <cstring>
 #include <unistd.h>
+
 
 class ErrorCalculator 
 {
@@ -69,10 +71,10 @@ class ErrorCalculator
 		std::vector< std::vector<double> > get_error() { return current_error_vector; }
 		std::vector< std::vector<double> > get_error2() { return current_error_vector2; }
 
-		void callback_centers(const uncalibrated_visual_servoing::TrackedPoints::ConstPtr& msg)
+		void callback_centers(const hil_servoing::TrackedPoints::ConstPtr& msg)
 		{
 			if (calculate_now && !new_error && task_ids.size() != 0) {
-				uncalibrated_visual_servoing::TrackedPoints c = *msg;
+				hil_servoing::TrackedPoints c = *msg;
 				std::vector<Eigen::Vector2d> v;
 			    for (int i = 0; i < c.points.size(); ++i) {
 			        Eigen::Vector2d p;
@@ -80,16 +82,16 @@ class ErrorCalculator
 			        p[1] = c.points[i].y;			        
 			        v.push_back(p);
 			    }
-			    end_effector_position = v[0];
+			    end_effector_position = v[1];
     			current_error_vector = calculate_error(v);
     			new_error = true;
     			new_eef = true;
    			}
 		}
-        void callback_centers2(const uncalibrated_visual_servoing::TrackedPoints::ConstPtr& msg)
+        void callback_centers2(const hil_servoing::TrackedPoints::ConstPtr& msg)
         {
 			if (calculate_now && !new_error2 && task_ids.size() != 0) {
-				uncalibrated_visual_servoing::TrackedPoints c2 = *msg;
+				hil_servoing::TrackedPoints c2 = *msg;
 				std::vector<Eigen::Vector2d> v2;
 			    for (int i = 0; i < c2.points.size(); ++i) {
 			        Eigen::Vector2d p2;
@@ -97,25 +99,21 @@ class ErrorCalculator
 			        p2[1] = c2.points[i].y;
 			        v2.push_back(p2);
 			    }
-			    end_effector_position2 = v2[0];
+			    end_effector_position2 = v2[1];
 		    	current_error_vector2 = calculate_error(v2);
 		    	new_error2 = true;
 		    	new_eef2 = true;
 			}
         }
-
-
-        // void callback_task_ids(const assistive_uncalibrated_visual_servoing::TaskIds::ConstPtr& msg)
-        // {
-        // 	assistive_uncalibrated_visual_servoing::TaskIds tasks = *msg;
-        // 	Eigen::VectorXd temp(tasks.ids.size());
-        // 	for (int i = 0; i < tasks.ids.size(); ++i) {
-        // 		temp[i] = tasks.ids[i];
-        // 	}
-		// 	task_ids = temp;
-        // }
-
-
+        void callback_task_ids(const hil_servoing::TaskIds::ConstPtr& msg)
+        {
+        	hil_servoing::TaskIds tasks = *msg;
+        	Eigen::VectorXd temp(tasks.ids.size());
+        	for (int i = 0; i < tasks.ids.size(); ++i) {
+        		temp[i] = tasks.ids[i];
+        	}
+			task_ids = temp;
+        }
         void callback_calculate(const std_msgs::Bool::ConstPtr& msg)
         {
 			bool b = msg->data;
